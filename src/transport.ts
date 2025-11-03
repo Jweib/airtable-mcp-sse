@@ -6,6 +6,13 @@ import { AirtableMCPServer } from './mcpServer.js';
 import { AirtableService } from './airtableService.js';
 
 async function handleSSE(req: http.IncomingMessage, res: http.ServerResponse, url: URL, sessions: Map<string, SSEServerTransport>) {
+  const mcpSecret = process.env.MCP_SECRET;
+  const xMcpAuth = req.headers["x-mcp-auth"];
+  if (!xMcpAuth || xMcpAuth !== mcpSecret) {
+    res.statusCode = 403;
+    res.end('Invalid or missing X-MCP-Auth token');
+    return;
+  }
   if (req.method === 'POST') {
     const sessionId = url.searchParams.get('sessionId');
     if (!sessionId) {
