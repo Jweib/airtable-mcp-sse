@@ -5,78 +5,91 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { AirtableMCPServer } from './mcpServer.js';
 import { AirtableService } from './airtableService.js';
 
-async function handleSSE(req: http.IncomingMessage, res: http.ServerResponse, url: URL, sessions: Map<string, SSEServerTransport>) {
-  // Bloque immédiatement toute tentative OIDC discovery (Dust le fait si 401)
+const MCP_PATH = '/sse';
+const MESSAGES_PATH = '/messages';
+
+async function handleRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  url: URL,
+  sessions: Map<string, SSEServerTransport>
+) {
+  // 1) Bloque toute découverte OIDC (Dust s’y essaie si 401 est vu quelque part)
   if (url.pathname.startsWith('/.well-known')) {
     res.statusCode = 404;
     return res.end('Not found');
   }
-  // --- Auth persistante Dust : vérifie le header X-MCP-Auth ---
+
+  // 2) Auth persistante côté Dust → MCP via X-MCP-Auth
   const mcpSecret = process.env.MCP_SECRET;
   const xMcpAuth = req.headers['x-mcp-auth'];
+  if (!mcpSecret) {
+    res.statusCode = 500;
+    return res.end('Server misconfigured: missing MCP_SECRET');
+  }
   if (!xMcpAuth || xMcpAuth !== mcpSecret) {
     res.statusCode = 403;
     return res.end('Invalid or missing X-MCP-Auth token');
   }
-  const mcpSecret = process.env.MCP_SECRET;
-  const xMcpAuth = req.headers["x-mcp-auth"];
-  if (!xMcpAuth || xMcpAuth !== mcpSecret) {
-    res.statusCode = 403;
-    res.end('Invalid or missing X-MCP-Auth token');
-    return;
-  }
-  if (req.method === 'POST') {
-    const sessionId = url.searchParams.get('sessionId');
-    if (!sessionId) {
-      res.statusCode = 400;
-      return res.end('Missing sessionId');
-    }
 
-    const transport = sessions.get(sessionId);
-    if (!transport) {
-      res.statusCode = 404;
-      return res.end('Session not found');
-    }
-
-    return await transport.handlePostMessage(req, res);
-  } else if (req.method === 'GET') {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      res.statusCode = 401;
-      return res.end('Missing or invalid Authorization header. Expected: "Bearer <API_KEY>"');
-    }
-    const apiKey = authHeader.substring('Bearer '.length);
-     // ✅ On ne dépend plus du header Authorization de Dust.
-    //    La clé Airtable vient de l'ENV du serveur (Railway).
+  // 3) Routage SSE classique (GET /sse + POST /messages?sessionId=...)
+  if (req.method === 'GET' && url.pathname === MCP_PATH) {
+    // 🔑 La clé Airtable vient de l’ENV serveur (Railway) — pas du header Authorization
     const apiKey = process.env.AIRTABLE_API_KEY;
     if (!apiKey) {
       res.statusCode = 500;
       return res.end('Server misconfigured: missing AIRTABLE_API_KEY');
     }
+
     const airtableService = new AirtableService(apiKey);
     const server = new AirtableMCPServer(airtableService);
 
-    const transport = new SSEServerTransport('/sse', res);
+    // ✅ Construction correcte du transport SSE (path + req + res)
+    const transport = new SSEServerTransport(MCP_PATH, req, res);
+
+    // Enregistre la session tant que la connexion SSE est ouverte
     sessions.set(transport.sessionId, transport);
+
+    // Connexion du serveur MCP au transport
     await server.connect(transport);
+
+    // Nettoyage à la fermeture de la socket SSE
     res.on('close', () => {
       sessions.delete(transport.sessionId);
     });
+
+    // Ne pas appeler res.end() ici : SSE garde le flux ouvert
     return;
   }
 
-  res.statusCode = 405;
-  res.end('Method not allowed');
+  if (req.method === 'POST' && url.pathname === MESSAGES_PATH) {
+    const sessionId = url.searchParams.get('sessionId');
+    if (!sessionId) {
+      res.statusCode = 400;
+      return res.end('Missing sessionId');
+    }
+    const transport = sessions.get(sessionId);
+    if (!transport) {
+      res.statusCode = 404;
+      return res.end('Session not found');
+    }
+    // L’implémentation SDK lit le body et pousse le message au serveur
+    return await transport.handlePostMessage(req, res);
+  }
+
+  // 4) Toute autre route → 404
+  res.statusCode = 404;
+  res.end('Not found');
 }
 
-export async function startHttpServer(config: { host?: string, port?: number }): Promise<http.Server> {
+export async function startHttpServer(config: { host?: string; port?: number }): Promise<http.Server> {
   const { host, port } = config;
   const httpServer = http.createServer();
   await new Promise<void>((resolve, reject) => {
     httpServer.on('error', reject);
     httpServer.listen(port, host, () => {
-      resolve();
       httpServer.removeListener('error', reject);
+      resolve();
     });
   });
   return httpServer;
@@ -84,33 +97,45 @@ export async function startHttpServer(config: { host?: string, port?: number }):
 
 export function httpAddressToString(address: string | AddressInfo | null): string {
   assert(address, 'Could not bind server socket');
-  if (typeof address === 'string')
-    return address;
+  if (typeof address === 'string') return address;
   const resolvedPort = address.port;
   let resolvedHost = address.family === 'IPv4' ? address.address : `[${address.address}]`;
-  if (resolvedHost === '0.0.0.0' || resolvedHost === '[::]')
-    resolvedHost = 'localhost';
+  if (resolvedHost === '0.0.0.0' || resolvedHost === '[::]') resolvedHost = 'localhost';
   return `http://${resolvedHost}:${resolvedPort}`;
 }
 
 export function startHttpTransport(httpServer: http.Server) {
   const sseSessions = new Map<string, SSEServerTransport>();
+
   httpServer.on('request', async (req, res) => {
-    const url = new URL(`http://localhost${req.url}`);
-    await handleSSE(req, res, url, sseSessions);
+    try {
+      const url = new URL(`http://localhost${req.url}`);
+      await handleRequest(req, res, url, sseSessions);
+    } catch (err) {
+      res.statusCode = 500;
+      res.end('Internal Server Error');
+      // eslint-disable-next-line no-console
+      console.error('[transport] Unhandled error:', err);
+    }
   });
-  const url = httpAddressToString(httpServer.address());
+
+  const baseUrl = httpAddressToString(httpServer.address());
   const message = [
-    `Listening on ${url}`,
+    `Listening on ${baseUrl}`,
     'Put this in your client config:',
-    JSON.stringify({
-      'mcpServers': {
-        'airtable': {
-          'url': `${url}/sse`
-        }
-      }
-    }, undefined, 2),
+    JSON.stringify(
+      {
+        mcpServers: {
+          airtable: {
+            url: `${baseUrl}${MCP_PATH}`,
+          },
+        },
+      },
+      undefined,
+      2
+    ),
   ].join('\n');
-    // eslint-disable-next-line no-console
+
+  // eslint-disable-next-line no-console
   console.error(message);
 }
