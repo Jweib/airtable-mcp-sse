@@ -62,20 +62,27 @@ async function handleRequest(
     return;
   }
 
-  if (req.method === 'POST' && url.pathname === MESSAGES_PATH) {
-    const sessionId = url.searchParams.get('sessionId');
-    if (!sessionId) {
-      res.statusCode = 400;
-      return res.end('Missing sessionId');
-    }
-    const transport = sessions.get(sessionId);
-    if (!transport) {
-      res.statusCode = 404;
-      return res.end('Session not found');
-    }
-    // L’implémentation SDK lit le body et pousse le message au serveur
-    return await transport.handlePostMessage(req, res);
+  if (req.method === 'POST' && (url.pathname === MESSAGES_PATH || url.pathname === MCP_PATH)) {
+  // 1) Récupère le sessionId (query ou header)
+  const sessionId =
+    url.searchParams.get('sessionId') ||
+    (req.headers['x-mcp-session-id'] as string | undefined) ||
+    (req.headers['x-session-id'] as string | undefined);
+
+  if (!sessionId) {
+    res.statusCode = 400;
+    return res.end('Missing sessionId');
   }
+
+  const transport = sessions.get(sessionId);
+  if (!transport) {
+    res.statusCode = 404;
+    return res.end('Session not found');
+  }
+
+  // 2) Laisse le SDK lire le body et router le message
+  return await transport.handlePostMessage(req, res);
+}
 
   // 4) Toute autre route → 404
   res.statusCode = 404;
