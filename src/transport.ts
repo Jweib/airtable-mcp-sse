@@ -45,7 +45,7 @@ async function handleRequest(
     const server = new AirtableMCPServer(airtableService);
 
     // ✅ Construction correcte du transport SSE (path + req + res)
-    const transport = new SSEServerTransport(MCP_PATH, req, res);
+    const transport = new SSEServerTransport(MCP_PATH, res);
 
     // Enregistre la session tant que la connexion SSE est ouverte
     sessions.set(transport.sessionId, transport);
