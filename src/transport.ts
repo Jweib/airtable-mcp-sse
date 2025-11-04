@@ -6,6 +6,18 @@ import { AirtableMCPServer } from './mcpServer.js';
 import { AirtableService } from './airtableService.js';
 
 async function handleSSE(req: http.IncomingMessage, res: http.ServerResponse, url: URL, sessions: Map<string, SSEServerTransport>) {
+  // Bloque immédiatement toute tentative OIDC discovery (Dust le fait si 401)
+  if (url.pathname.startsWith('/.well-known')) {
+    res.statusCode = 404;
+    return res.end('Not found');
+  }
+  // --- Auth persistante Dust : vérifie le header X-MCP-Auth ---
+  const mcpSecret = process.env.MCP_SECRET;
+  const xMcpAuth = req.headers['x-mcp-auth'];
+  if (!xMcpAuth || xMcpAuth !== mcpSecret) {
+    res.statusCode = 403;
+    return res.end('Invalid or missing X-MCP-Auth token');
+  }
   const mcpSecret = process.env.MCP_SECRET;
   const xMcpAuth = req.headers["x-mcp-auth"];
   if (!xMcpAuth || xMcpAuth !== mcpSecret) {
@@ -34,7 +46,13 @@ async function handleSSE(req: http.IncomingMessage, res: http.ServerResponse, ur
       return res.end('Missing or invalid Authorization header. Expected: "Bearer <API_KEY>"');
     }
     const apiKey = authHeader.substring('Bearer '.length);
-
+     // ✅ On ne dépend plus du header Authorization de Dust.
+    //    La clé Airtable vient de l'ENV du serveur (Railway).
+    const apiKey = process.env.AIRTABLE_API_KEY;
+    if (!apiKey) {
+      res.statusCode = 500;
+      return res.end('Server misconfigured: missing AIRTABLE_API_KEY');
+    }
     const airtableService = new AirtableService(apiKey);
     const server = new AirtableMCPServer(airtableService);
 
