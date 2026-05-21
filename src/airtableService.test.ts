@@ -108,54 +108,58 @@ describe('AirtableService', () => {
       });
     });
 
-    describe('listRecords', () => {
+    describe('listRecordsPage', () => {
       const mockBaseId = 'base123';
       const mockTableId = 'table123';
       const mockResponse = {
         records: [
-          { id: 'rec1', fields: { name: 'Test' } },
+          { id: 'rec1', createdTime: '2026-01-01T00:00:00.000Z', fields: { name: 'Test' } },
         ],
+        offset: 'itrNext',
       };
 
-      test('lists records successfully', async () => {
+      test('lists one page of records successfully', async () => {
         mockFetch.mockResolvedValueOnce({
           ok: true,
           text: () => Promise.resolve(JSON.stringify(mockResponse)),
         });
 
-        const result = await service.listRecords(mockBaseId, mockTableId);
+        const result = await service.listRecordsPage(mockBaseId, mockTableId);
 
         expect(mockFetch).toHaveBeenCalledWith(
           `${mockBaseUrl}/v0/${mockBaseId}/${mockTableId}?`,
           expect.any(Object),
         );
-        expect(result).toEqual(mockResponse.records);
+        expect(result.records).toEqual(mockResponse.records);
+        expect(result.offset).toBe('itrNext');
       });
 
-      test('handles maxRecords option', async () => {
+      test('handles pageSize option', async () => {
         mockFetch.mockResolvedValueOnce({
           ok: true,
-          text: () => Promise.resolve(JSON.stringify(mockResponse)),
+          text: () => Promise.resolve(JSON.stringify({ records: mockResponse.records })),
         });
 
-        await service.listRecords(mockBaseId, mockTableId, { maxRecords: 100 });
+        await service.listRecordsPage(mockBaseId, mockTableId, { pageSize: 100 });
 
         expect(mockFetch).toHaveBeenCalledWith(
-          `${mockBaseUrl}/v0/${mockBaseId}/${mockTableId}?maxRecords=100`,
+          `${mockBaseUrl}/v0/${mockBaseId}/${mockTableId}?pageSize=100`,
           expect.any(Object),
         );
       });
 
-      test('handles view option', async () => {
+      test('handles filterByFormula option', async () => {
         mockFetch.mockResolvedValueOnce({
           ok: true,
-          text: () => Promise.resolve(JSON.stringify(mockResponse)),
+          text: () => Promise.resolve(JSON.stringify({ records: mockResponse.records })),
         });
 
-        await service.listRecords(mockBaseId, mockTableId, { view: 'viw123' });
+        await service.listRecordsPage(mockBaseId, mockTableId, {
+          filterByFormula: 'FIND("test", {Name})',
+        });
 
         expect(mockFetch).toHaveBeenCalledWith(
-          `${mockBaseUrl}/v0/${mockBaseId}/${mockTableId}?view=viw123`,
+          expect.stringContaining('filterByFormula='),
           expect.any(Object),
         );
       });
@@ -163,10 +167,10 @@ describe('AirtableService', () => {
       test('handles sort option with single field', async () => {
         mockFetch.mockResolvedValueOnce({
           ok: true,
-          text: () => Promise.resolve(JSON.stringify(mockResponse)),
+          text: () => Promise.resolve(JSON.stringify({ records: mockResponse.records })),
         });
 
-        await service.listRecords(mockBaseId, mockTableId, {
+        await service.listRecordsPage(mockBaseId, mockTableId, {
           sort: [{ field: 'Name' }],
         });
 
@@ -179,22 +183,16 @@ describe('AirtableService', () => {
       test('handles sort option with multiple fields and directions', async () => {
         mockFetch.mockResolvedValueOnce({
           ok: true,
-          text: () => Promise.resolve(JSON.stringify(mockResponse)),
+          text: () => Promise.resolve(JSON.stringify({ records: mockResponse.records })),
         });
 
-        await service.listRecords(mockBaseId, mockTableId, {
+        await service.listRecordsPage(mockBaseId, mockTableId, {
           sort: [
             { field: 'Name', direction: 'asc' },
             { field: 'CreatedTime', direction: 'desc' },
           ],
         });
 
-        expect(mockFetch).toHaveBeenCalledWith(
-          expect.stringContaining(`${mockBaseUrl}/v0/${mockBaseId}/${mockTableId}?`),
-          expect.any(Object),
-        );
-
-        // Check the URL contains all the sort parameters
         const url = mockFetch.mock.calls[0]?.[0];
         expect(typeof url).toBe('string');
         expect(url).toContain('sort%5B0%5D%5Bfield%5D=Name');
@@ -235,100 +233,33 @@ describe('AirtableService', () => {
       });
     });
 
-    describe('searchRecords', () => {
-      const mockBaseId = 'base123';
-      const mockTableId = 'table123';
-      const mockResponse = {
-        records: [
-          { id: 'rec1', fields: { name: 'Test Result' } },
-        ],
-      };
-
-      test('searches records successfully', async () => {
-        // Mock the getBaseSchema call to return fields for validation
-        mockFetch.mockResolvedValueOnce({
-          ok: true,
-          text: () => Promise.resolve(JSON.stringify({
-            tables: [{
-              id: mockTableId,
-              name: 'Test Table',
-              primaryFieldId: 'fld1',
-              fields: [{ id: 'fld1', name: 'Name', type: 'singleLineText' }],
-              views: [{ id: 'viw1', name: 'Grid view', type: 'grid' }],
-            }],
-          })),
-        });
-
-        // Mock the listRecords call that searchRecords uses internally
-        mockFetch.mockResolvedValueOnce({
-          ok: true,
-          text: () => Promise.resolve(JSON.stringify(mockResponse)),
-        });
-
-        const result = await service.searchRecords(mockBaseId, mockTableId, 'test');
-
-        // Verify the second call (listRecords) has the correct filter formula
-        expect(mockFetch).toHaveBeenCalledTimes(2);
-        const secondCallUrl = mockFetch.mock.calls[1]?.[0] as string;
-        expect(secondCallUrl).toContain('filterByFormula=');
-        expect(result).toEqual(mockResponse.records);
-      });
-
-      test('handles view parameter', async () => {
-        // Mock the getBaseSchema call to return fields for validation
-        mockFetch.mockResolvedValueOnce({
-          ok: true,
-          text: () => Promise.resolve(JSON.stringify({
-            tables: [{
-              id: mockTableId,
-              name: 'Test Table',
-              primaryFieldId: 'fld1',
-              fields: [{ id: 'fld1', name: 'Name', type: 'singleLineText' }],
-              views: [{ id: 'viw1', name: 'Grid view', type: 'grid' }],
-            }],
-          })),
-        });
-
-        // Mock the listRecords call that searchRecords uses internally
-        mockFetch.mockResolvedValueOnce({
-          ok: true,
-          text: () => Promise.resolve(JSON.stringify(mockResponse)),
-        });
-
-        await service.searchRecords(mockBaseId, mockTableId, 'test', undefined, 100, 'viw123');
-
-        // Verify the second call (listRecords) has the view parameter
-        expect(mockFetch).toHaveBeenCalledTimes(2);
-        const secondCallUrl = mockFetch.mock.calls[1]?.[0] as string;
-        expect(secondCallUrl).toContain('view=viw123');
-      });
-    });
-
     describe('record operations', () => {
       const mockBaseId = 'base123';
       const mockTableId = 'table123';
       const mockRecordId = 'rec123';
 
-      test('creates record successfully', async () => {
-        const mockRecord = { id: mockRecordId, fields: { name: 'Test' } };
+      test('creates records page successfully', async () => {
+        const mockResponse = {
+          records: [{ id: mockRecordId, createdTime: '2026-01-01T00:00:00.000Z', fields: { name: 'Test' } }],
+        };
         mockFetch.mockResolvedValueOnce({
           ok: true,
-          text: () => Promise.resolve(JSON.stringify(mockRecord)),
+          text: () => Promise.resolve(JSON.stringify(mockResponse)),
         });
 
-        const result = await service.createRecord(mockBaseId, mockTableId, { name: 'Test' });
+        const result = await service.createRecordsPage(mockBaseId, mockTableId, [{ name: 'Test' }]);
 
         expect(mockFetch).toHaveBeenCalledWith(
           `${mockBaseUrl}/v0/${mockBaseId}/${mockTableId}`,
           expect.objectContaining({
             method: 'POST',
-            body: expect.any(String),
+            body: JSON.stringify({ records: [{ fields: { name: 'Test' } }] }),
           }),
         );
-        expect(result).toEqual(mockRecord);
+        expect(result).toEqual(mockResponse.records);
       });
 
-      test('updates records successfully', async () => {
+      test('updates records page successfully', async () => {
         const mockResponse = {
           records: [{ id: mockRecordId, fields: { name: 'Updated' } }],
         };
@@ -338,19 +269,19 @@ describe('AirtableService', () => {
         });
 
         const records = [{ id: mockRecordId, fields: { name: 'Updated' } }];
-        const result = await service.updateRecords(mockBaseId, mockTableId, records);
+        const result = await service.updateRecordsPage(mockBaseId, mockTableId, records);
 
         expect(mockFetch).toHaveBeenCalledWith(
           `${mockBaseUrl}/v0/${mockBaseId}/${mockTableId}`,
           expect.objectContaining({
             method: 'PATCH',
-            body: expect.any(String),
+            body: JSON.stringify({ records }),
           }),
         );
         expect(result).toEqual(mockResponse.records);
       });
 
-      test('deletes records successfully', async () => {
+      test('deletes records page successfully', async () => {
         const mockResponse = {
           records: [{ id: mockRecordId, deleted: true }],
         };
@@ -359,7 +290,7 @@ describe('AirtableService', () => {
           text: () => Promise.resolve(JSON.stringify(mockResponse)),
         });
 
-        const result = await service.deleteRecords(mockBaseId, mockTableId, [mockRecordId]);
+        const result = await service.deleteRecordsPage(mockBaseId, mockTableId, [mockRecordId]);
 
         expect(mockFetch).toHaveBeenCalledWith(
           expect.stringContaining(`${mockBaseUrl}/v0/${mockBaseId}/${mockTableId}?records[]=${mockRecordId}`),
@@ -367,7 +298,7 @@ describe('AirtableService', () => {
             method: 'DELETE',
           }),
         );
-        expect(result).toEqual([{ id: mockRecordId }]);
+        expect(result).toEqual(mockResponse.records);
       });
     });
   });

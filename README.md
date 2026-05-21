@@ -2,201 +2,170 @@
 
 [![smithery badge](https://smithery.ai/badge/airtable-mcp-server)](https://smithery.ai/server/airtable-mcp-server)
 
-A Model Context Protocol server that provides read and write access to Airtable databases. This server enables LLMs to inspect database schemas, then read and write records.
+A Model Context Protocol server that provides read and write access to Airtable databases, aligned with the official Airtable MCP tool contracts.
 
 https://github.com/user-attachments/assets/c8285e76-d0ed-4018-94c7-20535db6c944
 
 ## Usage
 
-1.  **Start the server**:
-    ```bash
-    npm start
-    ```
-    The server will start on port 8080.
+1. **Start the server**:
+   ```bash
+   npm start
+   ```
+   The server listens on port 8080.
 
-2.  **Configure your client**:
-    To use this server with a client like the Claude Desktop app, add the following configuration to the "mcpServers" section of your client's configuration file. The API key should be provided in the `Authorization` header as a Bearer token.
+2. **Configure your client**:
+   Add this to the `mcpServers` section of your MCP client configuration. Provide your [Airtable personal access token](https://airtable.com/create/tokens) as a Bearer token.
 
-    ```json
+   ```json
+   {
+     "mcpServers": {
+       "airtable": {
+         "url": "http://localhost:8080/sse",
+         "headers": {
+           "Authorization": "Bearer pat123.abc123"
+         }
+       }
+     }
+   }
+   ```
+
+   Required scopes: at least `schema.bases:read` and `data.records:read`, plus write scopes if you create or update data.
+
+## MCP tools (v2)
+
+### Records and tables
+
+| Tool | Description |
+|------|-------------|
+| `list_records_for_table` | List records with `cellValuesByFieldId`, filters, sort, cursor pagination |
+| `search_records` | Tokenized text search across selected fields |
+| `get_table_schema` | Full table schema (fields, views, types) |
+| `create_records_for_table` | Create up to 50 records per call (batched to REST) |
+| `update_records_for_table` | Update up to 50 records per call (PATCH, batched) |
+| `delete_records_for_table` | Delete up to 50 records per call (batched) |
+
+**Example — list records:**
+
+```json
+{
+  "name": "list_records_for_table",
+  "arguments": {
+    "baseId": "appXXXXXXXXXXXXXX",
+    "tableId": "Contacts",
+    "pageSize": 100,
+    "fieldIds": ["fldName", "fldEmail"]
+  }
+}
+```
+
+**Response shape:**
+
+```json
+{
+  "records": [
     {
-      "mcpServers": {
-        "airtable": {
-          "url": "http://localhost:8080/sse",
-          "headers": {
-            "Authorization": "Bearer pat123.abc123"
-          }
-        }
-      }
+      "id": "recXXXXXXXXXXXXXX",
+      "createdTime": "2026-04-20T19:34:18.000Z",
+      "cellValuesByFieldId": { "fldName": "Alice" }
     }
-    ```
-    Replace `pat123.abc123` with your [Airtable personal access token](https://airtable.com/create/tokens). Your token should have at least `schema.bases:read` and `data.records:read`, and optionally the corresponding write permissions.
+  ],
+  "metadata": { "totalRecordCount": 1 }
+}
+```
 
-## Components
+**Example — search:**
 
-### Tools
+```json
+{
+  "name": "search_records",
+  "arguments": {
+    "baseId": "appXXXXXXXXXXXXXX",
+    "table": "Contacts",
+    "query": "acme paris",
+    "fields": "ALL_SEARCHABLE_FIELDS",
+    "pageSize": 50
+  }
+}
+```
 
-- **list_records**
-  - Lists records from a specified Airtable table
-  - Input parameters:
-    - `baseId` (string, required): The ID of the Airtable base
-    - `tableId` (string, required): The ID of the table to query
-    - `maxRecords` (number, optional): Maximum number of records to return. Defaults to 100.
-    - `filterByFormula` (string, optional): Airtable formula to filter records
+**Example — create records:**
 
-- **search_records**
-  - Search for records containing specific text
-  - Input parameters:
-    - `baseId` (string, required): The ID of the Airtable base
-    - `tableId` (string, required): The ID of the table to query
-    - `searchTerm` (string, required): Text to search for in records
-    - `fieldIds` (array, optional): Specific field IDs to search in. If not provided, searches all text-based fields.
-    - `maxRecords` (number, optional): Maximum number of records to return. Defaults to 100.
+```json
+{
+  "name": "create_records_for_table",
+  "arguments": {
+    "baseId": "appXXXXXXXXXXXXXX",
+    "tableId": "tblXXXXXXXXXXXXXX",
+    "records": [
+      { "cellValuesByFieldId": { "fldName": "New row" } }
+    ]
+  }
+}
+```
 
-- **list_bases**
-  - Lists all accessible Airtable bases
-  - No input parameters required
-  - Returns base ID, name, and permission level
+### Discovery
 
-- **describe_base**
-  - Gets a complete schema for a specific base, including all its tables
-  - Input parameters:
-    - `baseId` (string, required): The ID of the Airtable base
-    - `detailLevel` (string, optional): The amount of detail to get about the tables (`tableIdentifiersOnly`, `identifiersOnly`, or `full`)
-  - Returns the base information along with a list of all its tables and their schemas to the specified detail level.
+| Tool | Description |
+|------|-------------|
+| `list_bases` | All accessible bases |
+| `search_bases` | Filter bases by name (case-insensitive) |
+| `list_tables_for_base` | Compact table list (`id`, `name`, `primaryFieldId`) |
 
-- **describe_all_bases**
-  - Gets a complete schema for all accessible bases and their tables
-  - Input parameters:
-    - `detailLevel` (string, optional): The amount of detail to get about the tables (`tableIdentifiersOnly`, `identifiersOnly`, or `full`)
-  - Returns a list of all bases, each with a list of all its tables and their schemas to the specified detail level.
+**Example — list bases:**
 
-- **list_tables**
-  - Lists all tables in a specific base
-  - Input parameters:
-    - `baseId` (string, required): The ID of the Airtable base
-    - `detailLevel` (string, optional): The amount of detail to get about the tables (`tableIdentifiersOnly`, `identifiersOnly`, or `full`)
-  - Returns table ID, name, description, fields, and views (to the given `detailLevel`)
+```json
+{ "name": "list_bases", "arguments": {} }
+```
 
-- **describe_table**
-  - Gets detailed information about a specific table
-  - Input parameters:
-    - `baseId` (string, required): The ID of the Airtable base
-    - `tableId` (string, required): The ID of the table to describe
-    - `detailLevel` (string, optional): The amount of detail to get about the table (`tableIdentifiersOnly`, `identifiersOnly`, or `full`)
-  - Returns the same format as list_tables but for a single table
-  - Useful for getting details about a specific table without fetching information about all tables in the base
+```json
+{
+  "bases": [
+    { "id": "appXXX", "name": "CRM", "permissionLevel": "owner" }
+  ]
+}
+```
 
-- **get_record**
-  - Gets a specific record by ID
-  - Input parameters:
-    - `baseId` (string, required): The ID of the Airtable base
-    - `tableId` (string, required): The ID of the table
-    - `recordId` (string, required): The ID of the record to retrieve
+### Schema admin (non-official, retained)
 
-- **create_record**
-  - Creates a new record in a table
-  - Input parameters:
-    - `baseId` (string, required): The ID of the Airtable base
-    - `tableId` (string, required): The ID of the table
-    - `fields` (object, required): The fields and values for the new record
+These tools use the Airtable Metadata API and legacy `{ fields }` payloads. They are convenient for bootstrapping bases but are not part of the official record-oriented MCP contract.
 
-- **update_records**
-  - Updates one or more records in a table
-  - Input parameters:
-    - `baseId` (string, required): The ID of the Airtable base
-    - `tableId` (string, required): The ID of the table
-    - `records` (array, required): Array of objects containing record ID and fields to update
+| Tool | Description |
+|------|-------------|
+| `get_record` | Fetch one record by ID (`{ id, fields }`) |
+| `create_table` | Create a table |
+| `update_table` | Rename or describe a table |
+| `create_field` | Add a field |
+| `update_field` | Rename or describe a field |
 
-- **delete_records**
-  - Deletes one or more records from a table
-  - Input parameters:
-    - `baseId` (string, required): The ID of the Airtable base
-    - `tableId` (string, required): The ID of the table
-    - `recordIds` (array, required): Array of record IDs to delete
+## Resources
 
-- **create_table**
-  - Creates a new table in a base
-  - Input parameters:
-    - `baseId` (string, required): The ID of the Airtable base
-    - `name` (string, required): Name of the new table
-    - `description` (string, optional): Description of the table
-    - `fields` (array, required): Array of field definitions (name, type, description, options)
+Table schemas are exposed as MCP resources:
 
-- **update_table**
-  - Updates a table's name or description
-  - Input parameters:
-    - `baseId` (string, required): The ID of the Airtable base
-    - `tableId` (string, required): The ID of the table
-    - `name` (string, optional): New name for the table
-    - `description` (string, optional): New description for the table
+- URI: `airtable://<baseId>/<tableId>/schema`
+- JSON includes field types, options, and views (same detail as a full schema read).
 
-- **create_field**
-  - Creates a new field in a table
-  - Input parameters:
-    - `baseId` (string, required): The ID of the Airtable base
-    - `tableId` (string, required): The ID of the table
-    - `name` (string, required): Name of the new field
-    - `type` (string, required): Type of the field
-    - `description` (string, optional): Description of the field
-    - `options` (object, optional): Field-specific options
+## Migration from v1
 
-- **update_field**
-  - Updates a field's name or description
-  - Input parameters:
-    - `baseId` (string, required): The ID of the Airtable base
-    - `tableId` (string, required): The ID of the table
-    - `fieldId` (string, required): The ID of the field
-    - `name` (string, optional): New name for the field
-    - `description` (string, optional): New description for the field
-
-### Resources
-
-The server provides schema information for Airtable bases and tables:
-
-- **Table Schemas** (`airtable://<baseId>/<tableId>/schema`)
-  - JSON schema information for each table
-  - Includes:
-    - Base id and table id
-    - Table name and description
-    - Primary field ID
-    - Field definitions (ID, name, type, description, options)
-    - View definitions (ID, name, type)
-  - Automatically discovered from Airtable's metadata API
+See [MIGRATION.md](./MIGRATION.md) for renamed tools, parameter changes, and output format differences.
 
 ## Hosting with Docker
 
-To host this server using Docker, follow these steps:
+```bash
+docker build -t airtable-mcp-server .
+docker run -p 8080:8080 -e AIRTABLE_API_KEY=pat... airtable-mcp-server
+```
 
-1.  **Build the Docker image**:
-    ```bash
-    docker build -t airtable-mcp-server .
-    ```
-
-2.  **Run the Docker container**:
-    ```bash
-    docker run -p 8080:8080 airtable-mcp-server
-    ```
-    This will start the server and map port 8080 from the container to port 8080 on your host machine. You can then access the server at `http://localhost:8080`.
-
-    For production use, you should run this behind a reverse proxy that provides HTTPS.
+Use HTTPS in production (reverse proxy in front of port 8080).
 
 ## Contributing
 
-Pull requests are welcomed on GitHub! To get started:
-
-1. Install Git and Node.js
-2. Clone the repository
-3. Install dependencies with `npm install`
-4. Run `npm run test` to run tests
-5. Build with `npm run build`
-  - You can use `npm run build:watch` to automatically build after editing [`src/index.ts`](./src/index.ts). This means you can hit save, reload Claude Desktop (with Ctrl/Cmd+R), and the changes apply.
+```bash
+npm install
+npm test
+npm run build
+```
 
 ## Releases
 
-Versions follow the [semantic versioning spec](https://semver.org/).
-
-To release:
-
-1. Use `npm version <major | minor | patch>` to bump the version
-2. Run `git push --follow-tags` to push with tags
-3. Wait for GitHub Actions to publish to the NPM registry.
+Versions follow [semantic versioning](https://semver.org/). See [CHANGELOG.md](./CHANGELOG.md).

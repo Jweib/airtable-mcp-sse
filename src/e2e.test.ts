@@ -21,6 +21,11 @@ const parseListBasesToolResult = (text: string): Array<{ id: string; name: strin
   return parsed.bases ?? [];
 };
 
+const parseListTablesForBaseResult = (text: string): Array<{ id: string; name: string; primaryFieldId: string }> => {
+  const parsed = JSON.parse(text) as { tables?: Array<{ id: string; name: string; primaryFieldId: string }> };
+  return parsed.tables ?? [];
+};
+
 (process.env.RUN_INTEGRATION ? describe : describe.skip)('AirtableMCPServer Integration', () => {
   let server: AirtableMCPServer;
   let serverTransport: InMemoryTransport;
@@ -62,25 +67,23 @@ const parseListBasesToolResult = (text: string): Array<{ id: string; name: strin
       params: {},
     });
 
-    expect(result.tools.map((t) => t.name)).toMatchInlineSnapshot(`
-      [
-        "list_records",
-        "search_records",
-        "list_bases",
-        "list_tables",
-        "describe_table",
-        "get_record",
-        "create_record",
-        "update_records",
-        "delete_records",
-        "create_table",
-        "update_table",
-        "create_field",
-        "update_field",
-      ]
-    `);
-    expect(result.tools[0]).toMatchObject({
-      name: 'list_records',
+    expect(result.tools.map((t) => t.name).sort()).toEqual([
+      'create_field',
+      'create_records_for_table',
+      'create_table',
+      'delete_records_for_table',
+      'get_record',
+      'get_table_schema',
+      'list_bases',
+      'list_records_for_table',
+      'list_tables_for_base',
+      'search_bases',
+      'search_records',
+      'update_field',
+      'update_records_for_table',
+      'update_table',
+    ]);
+    expect(result.tools.find((t) => t.name === 'list_records_for_table')).toMatchObject({
       description: expect.any(String),
       inputSchema: expect.objectContaining({
         type: 'object',
@@ -141,7 +144,7 @@ const parseListBasesToolResult = (text: string): Array<{ id: string; name: strin
       id: '2',
       method: 'tools/call',
       params: {
-        name: 'list_tables',
+        name: 'list_tables_for_base',
         arguments: {
           baseId,
         },
@@ -157,13 +160,12 @@ const parseListBasesToolResult = (text: string): Array<{ id: string; name: strin
       isError: false,
     });
 
-    const content = JSON.parse(result.content[0]!.text as string);
-    expect(Array.isArray(content)).toBe(true);
-    if (content.length > 0) {
-      expect(content[0]).toMatchObject({
+    const tables = parseListTablesForBaseResult(result.content[0]!.text as string);
+    if (tables.length > 0) {
+      expect(tables[0]).toMatchObject({
         id: expect.any(String),
         name: expect.any(String),
-        fields: expect.any(Array),
+        primaryFieldId: expect.any(String),
       });
     }
   });
@@ -190,32 +192,31 @@ const parseListBasesToolResult = (text: string): Array<{ id: string; name: strin
       id: '2',
       method: 'tools/call',
       params: {
-        name: 'list_tables',
+        name: 'list_tables_for_base',
         arguments: {
           baseId,
         },
       },
     });
 
-    const tables = JSON.parse(tablesResult.content[0]!.text as string);
+    const tables = parseListTablesForBaseResult(tablesResult.content[0]!.text as string);
     if (tables.length === 0) {
       // eslint-disable-next-line no-console
-      console.warn('Skipping list_records test as no tables found');
+      console.warn('Skipping list_records_for_table test as no tables found');
       return;
     }
     const tableId = tables[0]!.id;
 
-    // Finally list records
     const result = await sendRequest<CallToolResult>({
       jsonrpc: '2.0',
       id: '3',
       method: 'tools/call',
       params: {
-        name: 'list_records',
+        name: 'list_records_for_table',
         arguments: {
           baseId,
           tableId,
-          maxRecords: 10,
+          pageSize: 10,
         },
       },
     });
@@ -230,87 +231,12 @@ const parseListBasesToolResult = (text: string): Array<{ id: string; name: strin
     });
 
     const content = JSON.parse(result.content[0]!.text as string);
-    expect(Array.isArray(content)).toBe(true);
-    if (content.length > 0) {
-      expect(content[0]).toMatchObject({
+    expect(content).toHaveProperty('records');
+    expect(Array.isArray(content.records)).toBe(true);
+    if (content.records.length > 0) {
+      expect(content.records[0]).toMatchObject({
         id: expect.any(String),
-        fields: expect.any(Object),
-      });
-    }
-  });
-
-  test('should list records from a view', async () => {
-    // First get a base ID
-    const basesResult = await sendRequest<CallToolResult>({
-      jsonrpc: '2.0',
-      id: '1',
-      method: 'tools/call',
-      params: {
-        name: 'list_bases',
-        arguments: {},
-      },
-    });
-
-    const bases = parseListBasesToolResult(basesResult.content[0]!.text as string);
-    expect(bases.length).toBeGreaterThan(0);
-    const baseId = bases[0]!.id;
-
-    // Then get a table ID and view ID
-    const tablesResult = await sendRequest<CallToolResult>({
-      jsonrpc: '2.0',
-      id: '2',
-      method: 'tools/call',
-      params: {
-        name: 'list_tables',
-        arguments: {
-          baseId,
-          detailLevel: 'full',
-        },
-      },
-    });
-
-    const tables = JSON.parse(tablesResult.content[0]!.text as string);
-    if (tables.length === 0 || !tables[0]?.views || tables[0]?.views.length === 0) {
-      // eslint-disable-next-line no-console
-      console.warn('Skipping list_records_from_view test as no tables or views found');
-      return;
-    }
-
-    const tableId = tables[0]!.id;
-    const viewId = tables[0]!.views[0]!.id;
-
-    // List records from the view
-    const result = await sendRequest<CallToolResult>({
-      jsonrpc: '2.0',
-      id: '3',
-      method: 'tools/call',
-      params: {
-        name: 'list_records',
-        arguments: {
-          baseId,
-          tableId,
-          view: viewId,
-          maxRecords: 10,
-        },
-      },
-    });
-
-    expect(result).toMatchObject({
-      content: [{
-        type: 'text',
-        mimeType: 'application/json',
-        text: expect.any(String),
-      }],
-      isError: false,
-    });
-
-    const content = JSON.parse(result.content[0]!.text as string);
-    expect(Array.isArray(content)).toBe(true);
-    // Records might be empty if the view has filters that exclude all records
-    if (content.length > 0) {
-      expect(content[0]).toMatchObject({
-        id: expect.any(String),
-        fields: expect.any(Object),
+        cellValuesByFieldId: expect.any(Object),
       });
     }
   });
@@ -331,29 +257,37 @@ const parseListBasesToolResult = (text: string): Array<{ id: string; name: strin
     expect(bases.length).toBeGreaterThan(0);
     const baseId = bases[0]!.id;
 
-    // Then get a table ID and view ID
     const tablesResult = await sendRequest<CallToolResult>({
       jsonrpc: '2.0',
       id: '2',
       method: 'tools/call',
       params: {
-        name: 'list_tables',
-        arguments: {
-          baseId,
-          detailLevel: 'full',
-        },
+        name: 'list_tables_for_base',
+        arguments: { baseId },
       },
     });
 
-    const tables = JSON.parse(tablesResult.content[0]!.text as string);
-    if (tables.length === 0 || !tables[0]?.views || tables[0]?.views.length === 0) {
+    const tables = parseListTablesForBaseResult(tablesResult.content[0]!.text as string);
+    if (tables.length === 0) {
       // eslint-disable-next-line no-console
-      console.warn('Skipping search_records_with_view test as no tables or views found');
+      console.warn('Skipping search_records test as no tables found');
       return;
     }
 
     const tableId = tables[0]!.id;
-    const textField = tables[0]!.fields?.find(
+
+    const schemaResult = await sendRequest<CallToolResult>({
+      jsonrpc: '2.0',
+      id: '2b',
+      method: 'tools/call',
+      params: {
+        name: 'get_table_schema',
+        arguments: { baseId, tableId },
+      },
+    });
+
+    const tableSchema = JSON.parse(schemaResult.content[0]!.text as string);
+    const textField = tableSchema.fields?.find(
       (field: { type: string }) => field.type === 'singleLineText'
         || field.type === 'multilineText',
     );

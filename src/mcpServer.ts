@@ -13,17 +13,11 @@ import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import {
-  ListRecordsArgsSchema,
   ListRecordsForTableArgsSchema,
   GetTableSchemaArgsSchema,
-  ListTablesArgsSchema,
-  DescribeTableArgsSchema,
   GetRecordArgsSchema,
-  CreateRecordArgsSchema,
   CreateRecordsForTableArgsSchema,
-  UpdateRecordsArgsSchema,
   UpdateRecordsForTableArgsSchema,
-  DeleteRecordsArgsSchema,
   DeleteRecordsForTableArgsSchema,
   CreateTableArgsSchema,
   UpdateTableArgsSchema,
@@ -33,10 +27,6 @@ import {
   ListBasesArgsSchema,
   SearchBasesArgsSchema,
   ListTablesForBaseArgsSchema,
-  DescribeBaseArgsSchema,
-  DescribeAllBasesArgsSchema,
-  Table,
-  TableDetailLevelSchema,
   IAirtableService,
   IAirtableMCPServer,
 } from './types.js';
@@ -69,38 +59,6 @@ const formatToolResponse = (data: unknown, isError = false): CallToolResult => {
   };
 };
 
-const formatTableDetails = (table: Table, detailLevel: z.infer<typeof TableDetailLevelSchema>) => {
-  switch (detailLevel) {
-    case 'tableIdentifiersOnly':
-      return {
-        id: table.id,
-        name: table.name,
-      };
-    case 'identifiersOnly':
-      return {
-        id: table.id,
-        name: table.name,
-        fields: table.fields.map((field: { id: string; name: string; }) => ({
-          id: field.id,
-          name: field.name,
-        })),
-        views: table.views.map((view: { id: string; name: string; }) => ({
-          id: view.id,
-          name: view.name,
-        })),
-      };
-    case 'full':
-    default:
-      return {
-        id: table.id,
-        name: table.name,
-        description: table.description,
-        fields: table.fields,
-        views: table.views,
-      };
-  }
-};
-
 export class AirtableMCPServer implements IAirtableMCPServer {
   private server: Server;
 
@@ -113,7 +71,7 @@ export class AirtableMCPServer implements IAirtableMCPServer {
     this.server = new Server(
       {
         name: 'airtable-mcp-server',
-        version: '0.1.0',
+        version: '2.0.0',
       },
       {
         capabilities: {
@@ -188,19 +146,34 @@ export class AirtableMCPServer implements IAirtableMCPServer {
     return {
       tools: [
         {
-          name: 'list_records',
-          description: 'List records from a table',
-          inputSchema: getInputSchema(ListRecordsArgsSchema),
-        },
-        {
           name: 'list_records_for_table',
           description: 'List records from a table (official MCP-aligned format)',
           inputSchema: getInputSchema(ListRecordsForTableArgsSchema),
         },
         {
           name: 'search_records',
-          description: 'Search for records containing specific text',
+          description: 'Search records in a table by text query (official MCP-aligned format)',
           inputSchema: getInputSchema(SearchRecordsArgsSchema),
+        },
+        {
+          name: 'get_table_schema',
+          description: 'Get the full schema for a specific table (official MCP-aligned format)',
+          inputSchema: getInputSchema(GetTableSchemaArgsSchema),
+        },
+        {
+          name: 'create_records_for_table',
+          description: 'Create up to 50 records in a table (official MCP-aligned format)',
+          inputSchema: getInputSchema(CreateRecordsForTableArgsSchema),
+        },
+        {
+          name: 'update_records_for_table',
+          description: 'Update up to 50 records in a table (official MCP-aligned format)',
+          inputSchema: getInputSchema(UpdateRecordsForTableArgsSchema),
+        },
+        {
+          name: 'delete_records_for_table',
+          description: 'Delete up to 50 records from a table (official MCP-aligned format)',
+          inputSchema: getInputSchema(DeleteRecordsForTableArgsSchema),
         },
         {
           name: 'list_bases',
@@ -213,69 +186,14 @@ export class AirtableMCPServer implements IAirtableMCPServer {
           inputSchema: getInputSchema(SearchBasesArgsSchema),
         },
         {
-          name: 'describe_base',
-          description: 'Get a complete schema for a specific base, including all its tables, fields, views and information such as colunm descriptions or allowed field types',
-          inputSchema: getInputSchema(DescribeBaseArgsSchema),
-        },
-        {
-          name: 'describe_all_bases',
-          description: 'Get a complete schema for all accessible bases and their tables. This includes all tables, fields, views, and information such as column descriptions or allowed field types.',
-          inputSchema: getInputSchema(DescribeAllBasesArgsSchema),
-        },
-        {
-          name: 'list_tables',
-          description: 'List all tables in a specific base',
-          inputSchema: getInputSchema(ListTablesArgsSchema),
-        },
-        {
           name: 'list_tables_for_base',
           description: 'List table identifiers in a base (official MCP-aligned compact format)',
           inputSchema: getInputSchema(ListTablesForBaseArgsSchema),
         },
         {
-          name: 'describe_table',
-          description: 'Get detailed information about a specific table',
-          inputSchema: getInputSchema(DescribeTableArgsSchema),
-        },
-        {
-          name: 'get_table_schema',
-          description: 'Get the full schema for a specific table (official MCP-aligned format)',
-          inputSchema: getInputSchema(GetTableSchemaArgsSchema),
-        },
-        {
           name: 'get_record',
           description: 'Get a specific record by ID',
           inputSchema: getInputSchema(GetRecordArgsSchema),
-        },
-        {
-          name: 'create_record',
-          description: 'Create a new record in a table',
-          inputSchema: getInputSchema(CreateRecordArgsSchema),
-        },
-        {
-          name: 'create_records_for_table',
-          description: 'Create up to 50 records in a table (official MCP-aligned format)',
-          inputSchema: getInputSchema(CreateRecordsForTableArgsSchema),
-        },
-        {
-          name: 'update_records',
-          description: 'Update up to 10 records in a table',
-          inputSchema: getInputSchema(UpdateRecordsArgsSchema),
-        },
-        {
-          name: 'update_records_for_table',
-          description: 'Update up to 50 records in a table (official MCP-aligned format)',
-          inputSchema: getInputSchema(UpdateRecordsForTableArgsSchema),
-        },
-        {
-          name: 'delete_records',
-          description: 'Delete records from a table',
-          inputSchema: getInputSchema(DeleteRecordsArgsSchema),
-        },
-        {
-          name: 'delete_records_for_table',
-          description: 'Delete up to 50 records from a table (official MCP-aligned format)',
-          inputSchema: getInputSchema(DeleteRecordsForTableArgsSchema),
         },
         {
           name: 'create_table',
@@ -304,21 +222,6 @@ export class AirtableMCPServer implements IAirtableMCPServer {
   private async handleCallTool(request: z.infer<typeof CallToolRequestSchema>): Promise<CallToolResult> {
     try {
       switch (request.params.name) {
-        case 'list_records': {
-          const args = ListRecordsArgsSchema.parse(request.params.arguments);
-          const records = await this.airtableService.listRecords(
-            args.baseId,
-            args.tableId,
-            {
-              view: args.view,
-              maxRecords: args.maxRecords,
-              filterByFormula: args.filterByFormula,
-              sort: args.sort,
-            },
-          );
-          return formatToolResponse(records);
-        }
-
         case 'list_records_for_table': {
           const args = ListRecordsForTableArgsSchema.parse(request.params.arguments);
           const result = await listRecordsForTable(this.airtableService, {
@@ -352,6 +255,12 @@ export class AirtableMCPServer implements IAirtableMCPServer {
           return formatToolResponse(result);
         }
 
+        case 'get_table_schema': {
+          const args = GetTableSchemaArgsSchema.parse(request.params.arguments);
+          const result = await getTableSchema(this.airtableService, args);
+          return formatToolResponse(result);
+        }
+
         case 'list_bases': {
           ListBasesArgsSchema.parse(request.params.arguments ?? {});
           const result = await listBases(this.airtableService);
@@ -364,117 +273,15 @@ export class AirtableMCPServer implements IAirtableMCPServer {
           return formatToolResponse(result);
         }
 
-        case 'describe_base': {
-          const args = DescribeBaseArgsSchema.parse(request.params.arguments);
-          const base = await this.airtableService.describeBase(args.baseId);
-          return formatToolResponse(base);
-        }
-
-        case 'describe_all_bases': {
-          const bases = await this.airtableService.describeAllBases();
-          return formatToolResponse(bases);
-        }
-
         case 'list_tables_for_base': {
           const args = ListTablesForBaseArgsSchema.parse(request.params.arguments);
           const result = await listTablesForBase(this.airtableService, { baseId: args.baseId });
           return formatToolResponse(result);
         }
 
-        case 'list_tables': {
-          const args = ListTablesArgsSchema.parse(request.params.arguments);
-          const schema = await this.airtableService.getBaseSchema(args.baseId);
-          return formatToolResponse(schema.tables.map((table) => {
-            switch (args.detailLevel) {
-              case 'tableIdentifiersOnly':
-                return {
-                  id: table.id,
-                  name: table.name,
-                };
-              case 'identifiersOnly':
-                return {
-                  id: table.id,
-                  name: table.name,
-                  fields: table.fields.map((field) => ({
-                    id: field.id,
-                    name: field.name,
-                  })),
-                  views: table.views.map((view) => ({
-                    id: view.id,
-                    name: view.name,
-                  })),
-                };
-              case 'full':
-              default:
-                return {
-                  id: table.id,
-                  name: table.name,
-                  description: table.description,
-                  fields: table.fields,
-                  views: table.views,
-                };
-            }
-          }));
-        }
-
-        case 'get_table_schema': {
-          const args = GetTableSchemaArgsSchema.parse(request.params.arguments);
-          const result = await getTableSchema(this.airtableService, args);
-          return formatToolResponse(result);
-        }
-
-        case 'describe_table': {
-          const args = DescribeTableArgsSchema.parse(request.params.arguments);
-          const schema = await this.airtableService.getBaseSchema(args.baseId);
-          const table = schema.tables.find((t) => t.id === args.tableId);
-
-          if (!table) {
-            return formatToolResponse(`Table ${args.tableId} not found in base ${args.baseId}`, true);
-          }
-
-          switch (args.detailLevel) {
-            case 'tableIdentifiersOnly':
-              return formatToolResponse({
-                id: table.id,
-                name: table.name,
-              });
-            case 'identifiersOnly':
-              return formatToolResponse({
-                id: table.id,
-                name: table.name,
-                fields: table.fields.map((field) => ({
-                  id: field.id,
-                  name: field.name,
-                })),
-                views: table.views.map((view) => ({
-                  id: view.id,
-                  name: view.name,
-                })),
-              });
-            case 'full':
-            default:
-              return formatToolResponse({
-                id: table.id,
-                name: table.name,
-                description: table.description,
-                fields: table.fields,
-                views: table.views,
-              });
-          }
-        }
-
         case 'get_record': {
           const args = GetRecordArgsSchema.parse(request.params.arguments);
           const record = await this.airtableService.getRecord(args.baseId, args.tableId, args.recordId);
-          return formatToolResponse({
-            id: record.id,
-            fields: record.fields,
-          });
-        }
-
-        case 'create_record': {
-          const args = CreateRecordArgsSchema.parse(request.params.arguments);
-          const record = await this.airtableService.createRecord(args.baseId, args.tableId, args.fields);
           return formatToolResponse({
             id: record.id,
             fields: record.fields,
@@ -491,15 +298,6 @@ export class AirtableMCPServer implements IAirtableMCPServer {
           return formatToolResponse(result);
         }
 
-        case 'update_records': {
-          const args = UpdateRecordsArgsSchema.parse(request.params.arguments);
-          const records = await this.airtableService.updateRecords(args.baseId, args.tableId, args.records);
-          return formatToolResponse(records.map((record) => ({
-            id: record.id,
-            fields: record.fields,
-          })));
-        }
-
         case 'update_records_for_table': {
           const args = UpdateRecordsForTableArgsSchema.parse(request.params.arguments);
           const result = await updateRecordsForTable(this.airtableService, {
@@ -508,14 +306,6 @@ export class AirtableMCPServer implements IAirtableMCPServer {
             records: args.records,
           });
           return formatToolResponse(result);
-        }
-
-        case 'delete_records': {
-          const args = DeleteRecordsArgsSchema.parse(request.params.arguments);
-          const records = await this.airtableService.deleteRecords(args.baseId, args.tableId, args.recordIds);
-          return formatToolResponse(records.map((record) => ({
-            id: record.id,
-          })));
         }
 
         case 'delete_records_for_table': {

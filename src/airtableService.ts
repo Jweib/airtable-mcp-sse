@@ -4,7 +4,6 @@ import {
   IAirtableService,
   ListBasesResponse,
   BaseSchemaResponse,
-  ListRecordsOptions,
   ListRecordsPageOptions,
   ListRecordsPageResult,
   Field,
@@ -69,70 +68,6 @@ export class AirtableService implements IAirtableService {
 
   async getBaseSchema(baseId: string): Promise<BaseSchemaResponse> {
     return this.fetchFromAPI(`/v0/meta/bases/${baseId}/tables`, BaseSchemaResponseSchema);
-  }
-
-  async describeBase(baseId: string) {
-    const { bases } = await this.listBases();
-    const base = bases.find((b) => b.id === baseId);
-    if (!base) {
-      throw new Error(`Base with ID ${baseId} not found.`);
-    }
-    const { tables } = await this.getBaseSchema(base.id);
-    return {
-      ...base,
-      tables,
-    };
-  }
-
-  async describeAllBases() {
-    const { bases } = await this.listBases();
-    const basesAndTables = await Promise.all(
-      bases.map(async (base) => {
-        const { tables } = await this.getBaseSchema(base.id);
-        return {
-          ...base,
-          tables,
-        };
-      }),
-    );
-    return basesAndTables;
-  }
-
-  async listRecords(baseId: string, tableId: string, options: ListRecordsOptions = {}): Promise<AirtableRecord[]> {
-    let allRecords: AirtableRecord[] = [];
-    let offset: string | undefined;
-
-    do {
-      const queryParams = new URLSearchParams();
-      if (options.maxRecords) queryParams.append('maxRecords', options.maxRecords.toString());
-      if (options.filterByFormula) queryParams.append('filterByFormula', options.filterByFormula);
-      if (options.view) queryParams.append('view', options.view);
-      if (offset) queryParams.append('offset', offset);
-
-      // Add sort parameters if provided
-      if (options.sort && options.sort.length > 0) {
-        options.sort.forEach((sortOption, index) => {
-          queryParams.append(`sort[${index}][field]`, sortOption.field);
-          if (sortOption.direction) {
-            queryParams.append(`sort[${index}][direction]`, sortOption.direction);
-          }
-        });
-      }
-
-      // eslint-disable-next-line no-await-in-loop
-      const response = await this.fetchFromAPI(
-        `/v0/${baseId}/${tableId}?${queryParams.toString()}`,
-        z.object({
-          records: z.array(z.object({ id: z.string(), fields: z.record(z.any()) })),
-          offset: z.string().optional(),
-        }),
-      );
-
-      allRecords = allRecords.concat(response.records);
-      offset = response.offset;
-    } while (offset);
-
-    return allRecords;
   }
 
   private static buildRecordIdsFilterFormula(recordIds: string[]): string {
@@ -216,17 +151,6 @@ export class AirtableService implements IAirtableService {
     );
   }
 
-  async createRecord(baseId: string, tableId: string, fields: FieldSet): Promise<AirtableRecord> {
-    return this.fetchFromAPI(
-      `/v0/${baseId}/${tableId}`,
-      z.object({ id: z.string(), fields: z.record(z.any()) }),
-      {
-        method: 'POST',
-        body: JSON.stringify({ fields }),
-      },
-    );
-  }
-
   async createRecordsPage(
     baseId: string,
     tableId: string,
@@ -261,22 +185,6 @@ export class AirtableService implements IAirtableService {
     });
   }
 
-  async updateRecords(
-    baseId: string,
-    tableId: string,
-    records: { id: string; fields: FieldSet }[],
-  ): Promise<AirtableRecord[]> {
-    const response = await this.fetchFromAPI(
-      `/v0/${baseId}/${tableId}`,
-      z.object({ records: z.array(z.object({ id: z.string(), fields: z.record(z.any()) })) }),
-      {
-        method: 'PATCH',
-        body: JSON.stringify({ records }),
-      },
-    );
-    return response.records;
-  }
-
   async updateRecordsPage(
     baseId: string,
     tableId: string,
@@ -307,11 +215,6 @@ export class AirtableService implements IAirtableService {
       }
       return mapped;
     });
-  }
-
-  async deleteRecords(baseId: string, tableId: string, recordIds: string[]): Promise<{ id: string }[]> {
-    const records = await this.deleteRecordsPage(baseId, tableId, recordIds);
-    return records.map(({ id }) => ({ id }));
   }
 
   async deleteRecordsPage(
@@ -383,69 +286,4 @@ export class AirtableService implements IAirtableService {
     );
   }
 
-  private async validateAndGetSearchFields(
-    baseId: string,
-    tableId: string,
-    requestedFieldIds?: string[],
-  ): Promise<string[]> {
-    const schema = await this.getBaseSchema(baseId);
-    const table = schema.tables.find((t) => t.id === tableId);
-    if (!table) {
-      throw new Error(`Table ${tableId} not found in base ${baseId}`);
-    }
-
-    const searchableFieldTypes = [
-      'singleLineText',
-      'multilineText',
-      'richText',
-      'email',
-      'url',
-      'phoneNumber',
-    ];
-
-    const searchableFields = table.fields
-      .filter((field) => searchableFieldTypes.includes(field.type))
-      .map((field) => field.id);
-
-    if (searchableFields.length === 0) {
-      throw new Error('No text fields available to search');
-    }
-
-    // If specific fields were requested, validate they exist and are text fields
-    if (requestedFieldIds && requestedFieldIds.length > 0) {
-      // Check if any requested fields were invalid
-      const invalidFields = requestedFieldIds.filter((fieldId) => !searchableFields.includes(fieldId));
-      if (invalidFields.length > 0) {
-        throw new Error(`Invalid fields requested: ${invalidFields.join(', ')}`);
-      }
-
-      return requestedFieldIds;
-    }
-
-    return searchableFields;
-  }
-
-  async searchRecords(
-    baseId: string,
-    tableId: string,
-    searchTerm: string,
-    fieldIds?: string[],
-    maxRecords?: number,
-    view?: string,
-  ): Promise<AirtableRecord[]> {
-    // Validate and get search fields
-    const searchFields = await this.validateAndGetSearchFields(baseId, tableId, fieldIds);
-
-    // Escape the search term to prevent formula injection
-    const escapedTerm = searchTerm.replace(/["\\]/g, '\\$&');
-
-    // Build OR(FIND("term", field1), FIND("term", field2), ...)
-    const filterByFormula = `OR(${
-      searchFields
-        .map((fieldId) => `FIND("${escapedTerm}", {${fieldId}})`)
-        .join(',')
-    })`;
-
-    return this.listRecords(baseId, tableId, { maxRecords, filterByFormula, view });
-  }
 }

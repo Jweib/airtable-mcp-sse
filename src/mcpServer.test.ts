@@ -8,6 +8,23 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { IAirtableService } from './types.js';
 import { AirtableMCPServer } from './mcpServer.js';
 
+const OFFICIAL_TOOL_NAMES = [
+  'list_records_for_table',
+  'search_records',
+  'get_table_schema',
+  'create_records_for_table',
+  'update_records_for_table',
+  'delete_records_for_table',
+  'list_bases',
+  'search_bases',
+  'list_tables_for_base',
+  'get_record',
+  'create_table',
+  'update_table',
+  'create_field',
+  'update_field',
+];
+
 describe('AirtableMCPServer', () => {
   let server: AirtableMCPServer;
   let mockAirtableService: IAirtableService;
@@ -17,7 +34,6 @@ describe('AirtableMCPServer', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
 
-    // Create mock AirtableService
     mockAirtableService = {
       listBases: vi.fn().mockResolvedValue({
         bases: [
@@ -30,38 +46,55 @@ describe('AirtableMCPServer', () => {
             id: 'tbl1',
             name: 'Test Table',
             description: 'Test Description',
-            fields: [],
+            fields: [{ id: 'fld1', name: 'Name', type: 'singleLineText' }],
             views: [],
             primaryFieldId: 'fld1',
           },
         ],
       }),
-      listRecords: vi.fn().mockResolvedValue([
-        { id: 'rec1', fields: { name: 'Test Record' } },
-      ]),
+      listRecordsPage: vi.fn().mockResolvedValue({
+        records: [
+          {
+            id: 'rec1',
+            createdTime: '2026-01-01T00:00:00.000Z',
+            fields: { Name: 'Test Record' },
+          },
+        ],
+      }),
       getRecord: vi.fn().mockResolvedValue({
         id: 'rec1',
-        fields: { name: 'Test Record' },
+        fields: { Name: 'Test Record' },
       }),
-      createRecord: vi.fn().mockResolvedValue({
-        id: 'rec1',
-        fields: { name: 'New Record' },
-      }),
-      updateRecords: vi.fn().mockResolvedValue([
-        { id: 'rec1', fields: { name: 'Updated Record' } },
+      createRecordsPage: vi.fn().mockResolvedValue([
+        {
+          id: 'rec1',
+          createdTime: '2026-01-01T00:00:00.000Z',
+          fields: { Name: 'New Record' },
+        },
       ]),
-      deleteRecords: vi.fn().mockResolvedValue([
+      updateRecordsPage: vi.fn().mockResolvedValue([
+        {
+          id: 'rec1',
+          createdTime: '2026-01-01T00:00:00.000Z',
+          fields: { Name: 'Updated Record' },
+        },
+      ]),
+      deleteRecordsPage: vi.fn().mockResolvedValue([
         { id: 'rec1', deleted: true },
       ]),
       createTable: vi.fn().mockResolvedValue({
         id: 'tbl1',
         name: 'New Table',
         fields: [],
+        views: [],
+        primaryFieldId: 'fld1',
       }),
       updateTable: vi.fn().mockResolvedValue({
         id: 'tbl1',
         name: 'Updated Table',
         fields: [],
+        views: [],
+        primaryFieldId: 'fld1',
       }),
       createField: vi.fn().mockResolvedValue({
         id: 'fld1',
@@ -75,7 +108,6 @@ describe('AirtableMCPServer', () => {
       }),
     };
 
-    // Create server instance with test transport
     server = new AirtableMCPServer(mockAirtableService);
     [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
@@ -83,7 +115,6 @@ describe('AirtableMCPServer', () => {
 
   const sendRequest = async (message: JSONRPCRequest): Promise<JSONRPCResponse> => {
     return new Promise((resolve) => {
-      // Set up response handler
       clientTransport.onmessage = (response: JSONRPCMessage) => {
         resolve(response as JSONRPCResponse);
       };
@@ -130,14 +161,14 @@ describe('AirtableMCPServer', () => {
             name: 'Test Table',
             description: 'Test Description',
             primaryFieldId: 'fld1',
-            fields: [],
+            fields: [{ id: 'fld1', name: 'Name', type: 'singleLineText' }],
             views: [],
           }),
         }],
       });
     });
 
-    test('handles list_tools request', async () => {
+    test('exposes only official-aligned tools', async () => {
       const response = await sendRequest({
         jsonrpc: '2.0',
         id: '1',
@@ -145,27 +176,21 @@ describe('AirtableMCPServer', () => {
         params: {},
       });
 
-      expect((response.result.tools as Tool[]).length).toBeGreaterThanOrEqual(12);
-      expect((response.result.tools as Tool[])[0]).toMatchObject({
-        name: 'list_records',
-        description: expect.any(String),
-        inputSchema: expect.objectContaining({
-          type: 'object',
-        }),
-      });
+      const toolNames = (response.result.tools as Tool[]).map((tool) => tool.name).sort();
+      expect(toolNames).toEqual([...OFFICIAL_TOOL_NAMES].sort());
     });
 
-    test('handles list_records tool call', async () => {
+    test('handles list_records_for_table tool call', async () => {
       const response = await sendRequest({
         jsonrpc: '2.0',
         id: '1',
         method: 'tools/call',
         params: {
-          name: 'list_records',
+          name: 'list_records_for_table',
           arguments: {
-            baseId: 'base1',
+            baseId: 'appAAAAAAAAAAAAAA',
             tableId: 'tbl1',
-            maxRecords: 100,
+            pageSize: 10,
           },
         },
       });
@@ -174,9 +199,14 @@ describe('AirtableMCPServer', () => {
         content: [{
           type: 'text',
           mimeType: 'application/json',
-          text: JSON.stringify([
-            { id: 'rec1', fields: { name: 'Test Record' } },
-          ]),
+          text: JSON.stringify({
+            records: [{
+              id: 'rec1',
+              createdTime: '2026-01-01T00:00:00.000Z',
+              cellValuesByFieldId: { fld1: 'Test Record' },
+            }],
+            metadata: { totalRecordCount: 1 },
+          }),
         }],
         isError: false,
       });

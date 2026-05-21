@@ -3,8 +3,8 @@
   "name": "airtable-mcp-server",
   "display_name": "Airtable MCP Server",
   "version": "{{VERSION}}",
-  "description": "Read and write access to Airtable databases via the Model Context Protocol",
-  "long_description": "A comprehensive Model Context Protocol server that provides read and write access to Airtable databases. This server enables LLMs to inspect database schemas, then read and write records. Features include listing, searching, creating, updating, and deleting records, managing tables and fields, and accessing schema information as resources. Disclaimers: This is a third-party server, not developed by Airtable. Airtable and the Airtable trademark are registered trademarks of Formagrid Inc dba Airtable.",
+  "description": "Read and write access to Airtable databases via the Model Context Protocol (official-aligned v2 tools)",
+  "long_description": "A Model Context Protocol server aligned with the official Airtable MCP record and discovery tools. List, search, create, update, and delete records using cellValuesByFieldId; discover bases and tables; fetch full table schemas. Includes schema-admin helpers (create/update tables and fields, get_record). Third-party server, not developed by Airtable.",
   "icon": "icon.png",
   "author": {
     "name": "Adam Jones (domdomegg)",
@@ -31,58 +31,20 @@
     }
   },
   "tools": [
-    {
-      "name": "list_records",
-      "description": "List records from a table"
-    },
-    {
-      "name": "search_records",
-      "description": "Search for records containing specific text"
-    },
-    {
-      "name": "list_bases",
-      "description": "List all accessible Airtable bases"
-    },
-    {
-      "name": "list_tables",
-      "description": "List all tables in a specific base"
-    },
-    {
-      "name": "describe_table",
-      "description": "Get detailed information about a specific table"
-    },
-    {
-      "name": "get_record",
-      "description": "Get a specific record by ID"
-    },
-    {
-      "name": "create_record",
-      "description": "Create a new record in a table"
-    },
-    {
-      "name": "update_records",
-      "description": "Update up to 10 records in a table"
-    },
-    {
-      "name": "delete_records",
-      "description": "Delete records from a table"
-    },
-    {
-      "name": "create_table",
-      "description": "Create a new table in a base"
-    },
-    {
-      "name": "update_table",
-      "description": "Update a table's name or description"
-    },
-    {
-      "name": "create_field",
-      "description": "Create a new field in a table"
-    },
-    {
-      "name": "update_field",
-      "description": "Update a field's name or description"
-    }
+    { "name": "list_records_for_table", "description": "List records (official format)" },
+    { "name": "search_records", "description": "Search records by text query" },
+    { "name": "get_table_schema", "description": "Get full table schema" },
+    { "name": "create_records_for_table", "description": "Create records in a table" },
+    { "name": "update_records_for_table", "description": "Update records in a table" },
+    { "name": "delete_records_for_table", "description": "Delete records from a table" },
+    { "name": "list_bases", "description": "List accessible bases" },
+    { "name": "search_bases", "description": "Search bases by name" },
+    { "name": "list_tables_for_base", "description": "List tables in a base" },
+    { "name": "get_record", "description": "Get a record by ID" },
+    { "name": "create_table", "description": "Create a table" },
+    { "name": "update_table", "description": "Update a table" },
+    { "name": "create_field", "description": "Create a field" },
+    { "name": "update_field", "description": "Update a field" }
   ],
   "compatibility": {
     "claude_desktop": ">=0.10.0",

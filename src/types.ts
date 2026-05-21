@@ -456,18 +456,6 @@ export const BaseSchemaResponseSchema = z.object({
 });
 
 // Zod schemas for tool arguments
-export const ListRecordsArgsSchema = z.object({
-  baseId: z.string(),
-  tableId: z.string(),
-  view: z.string().optional().describe('View name or ID to use for filtering and sorting records. If provided, the view\'s filters and sorts will be applied.'),
-  maxRecords: z.number().optional().describe('Maximum number of records to return. Defaults to 100.'),
-  filterByFormula: z.string().optional().describe('Airtable formula to filter records'),
-  sort: z.array(z.object({
-    field: z.string().describe('Field name to sort by'),
-    direction: z.enum(['asc', 'desc']).optional().describe('Sort direction. Defaults to asc (ascending)'),
-  })).optional().describe('Specifies how to sort the records'),
-});
-
 export const SearchRecordsArgsSchema = z.object({
   baseId: z.string().describe('Airtable base ID (app + 14 alphanumeric characters)'),
   table: z.string().describe('Table ID (tbl + 14 chars) or table name'),
@@ -478,24 +466,6 @@ export const SearchRecordsArgsSchema = z.object({
   ]).describe('Field IDs or names to search, or ALL_SEARCHABLE_FIELDS'),
   pageSize: z.number().int().optional().describe('Records per page (default 1000, max 8000)'),
   cursor: z.string().optional().describe('Opaque pagination cursor from a previous response nextCursor'),
-});
-
-export const TableDetailLevelSchema = z.enum(['tableIdentifiersOnly', 'identifiersOnly', 'full']).describe(`Detail level for table information:
-- tableIdentifiersOnly: table IDs and names
-- identifiersOnly: table, field, and view IDs and names
-- full: complete details including field types, descriptions, and configurations
-
-Note for LLMs: To optimize context window usage, request the minimum detail level needed:
-- Use 'tableIdentifiersOnly' when you only need to list or reference tables
-- Use 'identifiersOnly' when you need to work with field or view references
-- Only use 'full' when you need field types, descriptions, or other detailed configuration
-
-If you only need detailed information on a few tables in a base with many complex tables, it might be more efficient for you to use list_tables with tableIdentifiersOnly, then describe_table with full on the specific tables you want.`);
-
-export const DescribeTableArgsSchema = z.object({
-  baseId: z.string(),
-  tableId: z.string(),
-  detailLevel: TableDetailLevelSchema.optional().default('full'),
 });
 
 export const GetTableSchemaArgsSchema = z.object({
@@ -515,21 +485,10 @@ export const ListTablesForBaseArgsSchema = z.object({
   baseId: z.string().describe('Airtable base ID (app + 14 alphanumeric characters)'),
 });
 
-export const ListTablesArgsSchema = z.object({
-  baseId: z.string(),
-  detailLevel: TableDetailLevelSchema.optional().default('full'),
-});
-
 export const GetRecordArgsSchema = z.object({
   baseId: z.string(),
   tableId: z.string(),
   recordId: z.string(),
-});
-
-export const CreateRecordArgsSchema = z.object({
-  baseId: z.string(),
-  tableId: z.string(),
-  fields: z.record(z.any()),
 });
 
 export const CreateRecordsForTableArgsSchema = z.object({
@@ -538,15 +497,6 @@ export const CreateRecordsForTableArgsSchema = z.object({
   records: z.array(z.object({
     cellValuesByFieldId: z.record(z.any()).describe('Field values keyed by field ID (fld...)'),
   })).min(1).max(50).describe('Records to create (1–50 per request)'),
-});
-
-export const UpdateRecordsArgsSchema = z.object({
-  baseId: z.string(),
-  tableId: z.string(),
-  records: z.array(z.object({
-    id: z.string(),
-    fields: z.record(z.any()),
-  })),
 });
 
 export const UpdateRecordsForTableArgsSchema = z.object({
@@ -611,15 +561,6 @@ export type Field = z.infer<typeof FieldSchema>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type FieldSet = Record<string, any>;
 export type AirtableRecord = { id: string, fields: FieldSet };
-export type BaseWithTables = (Base & { tables: Table[] });
-export type AllBasesWithTables = BaseWithTables[];
-
-export interface ListRecordsOptions {
-  view?: z.infer<typeof ListRecordsArgsSchema.shape.view>;
-  maxRecords?: z.infer<typeof ListRecordsArgsSchema.shape.maxRecords>;
-  filterByFormula?: z.infer<typeof ListRecordsArgsSchema.shape.filterByFormula>;
-  sort?: z.infer<typeof ListRecordsArgsSchema.shape.sort>;
-}
 
 export const ListRecordsForTableArgsSchema = z.object({
   baseId: z.string().describe('Airtable base ID (app + 14 alphanumeric characters)'),
@@ -658,34 +599,18 @@ export interface ListRecordsPageResult {
   offset?: string;
 }
 
-export const DescribeBaseArgsSchema = z.object({
-  baseId: z.string(),
-  detailLevel: TableDetailLevelSchema.optional().default('full'),
-});
-
-export const DescribeAllBasesArgsSchema = z.object({
-  detailLevel: TableDetailLevelSchema.optional().default('full'),
-});
-
 export interface IAirtableService {
   listBases(): Promise<ListBasesResponse>;
-  describeBase(baseId: string): Promise<BaseWithTables>;
-  describeAllBases(): Promise<AllBasesWithTables>;
   getBaseSchema(baseId: string): Promise<BaseSchemaResponse>;
-  listRecords(baseId: string, tableId: string, options?: ListRecordsOptions): Promise<AirtableRecord[]>;
   listRecordsPage(baseId: string, tableId: string, options?: ListRecordsPageOptions): Promise<ListRecordsPageResult>;
   getRecord(baseId: string, tableId: string, recordId: string): Promise<AirtableRecord>;
-  createRecord(baseId: string, tableId: string, fields: FieldSet): Promise<AirtableRecord>;
   createRecordsPage(baseId: string, tableId: string, records: FieldSet[]): Promise<AirtableRecord[]>;
-  updateRecords(baseId: string, tableId: string, records: { id: string; fields: FieldSet }[]): Promise<AirtableRecord[]>;
   updateRecordsPage(baseId: string, tableId: string, records: { id: string; fields: FieldSet }[]): Promise<AirtableRecord[]>;
-  deleteRecords(baseId: string, tableId: string, recordIds: string[]): Promise<{ id: string }[]>;
   deleteRecordsPage(baseId: string, tableId: string, recordIds: string[]): Promise<Array<{ id: string; deleted: boolean }>>;
   createTable(baseId: string, name: string, fields: Field[], description?: string): Promise<Table>;
   updateTable(baseId: string, tableId: string, updates: { name?: string | undefined; description?: string | undefined }): Promise<Table>;
   createField(baseId: string, tableId: string, field: Field): Promise<Field & { id: string }>;
   updateField(baseId: string, tableId: string, fieldId: string, updates: { name?: string | undefined; description?: string | undefined }): Promise<Field & { id: string }>;
-  searchRecords(baseId: string, tableId: string, searchTerm: string, fieldIds?: string[], maxRecords?: number, view?: string): Promise<AirtableRecord[]>;
 }
 
 export interface IAirtableMCPServer {
