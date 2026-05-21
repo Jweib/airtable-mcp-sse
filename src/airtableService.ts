@@ -277,6 +277,38 @@ export class AirtableService implements IAirtableService {
     return response.records;
   }
 
+  async updateRecordsPage(
+    baseId: string,
+    tableId: string,
+    records: { id: string; fields: FieldSet }[],
+  ): Promise<Array<AirtableRecord & { createdTime?: string }>> {
+    const response = await this.fetchFromAPI(
+      `/v0/${baseId}/${tableId}`,
+      z.object({
+        records: z.array(z.object({
+          id: z.string(),
+          createdTime: z.string().optional(),
+          fields: z.record(z.any()),
+        })),
+      }),
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ records }),
+      },
+    );
+
+    return response.records.map((record) => {
+      const mapped: AirtableRecord & { createdTime?: string } = {
+        id: record.id,
+        fields: record.fields,
+      };
+      if (record.createdTime) {
+        mapped.createdTime = record.createdTime;
+      }
+      return mapped;
+    });
+  }
+
   async deleteRecords(baseId: string, tableId: string, recordIds: string[]): Promise<{ id: string }[]> {
     const queryString = recordIds.map((id) => `records[]=${id}`).join('&');
     const response = await this.fetchFromAPI(

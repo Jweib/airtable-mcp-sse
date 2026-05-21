@@ -22,6 +22,7 @@ import {
   CreateRecordArgsSchema,
   CreateRecordsForTableArgsSchema,
   UpdateRecordsArgsSchema,
+  UpdateRecordsForTableArgsSchema,
   DeleteRecordsArgsSchema,
   CreateTableArgsSchema,
   UpdateTableArgsSchema,
@@ -38,6 +39,7 @@ import {
 import { listRecordsForTable } from './tools/listRecordsForTable.js';
 import { searchRecords } from './tools/searchRecords.js';
 import { createRecordsForTable } from './tools/createRecordsForTable.js';
+import { updateRecordsForTable } from './tools/updateRecordsForTable.js';
 import { getTableSchema } from './tools/getTableSchema.js';
 
 const getInputSchema = (schema: z.ZodType<object>): ListToolsResult['tools'][0]['inputSchema'] => {
@@ -245,6 +247,11 @@ export class AirtableMCPServer implements IAirtableMCPServer {
           name: 'update_records',
           description: 'Update up to 10 records in a table',
           inputSchema: getInputSchema(UpdateRecordsArgsSchema),
+        },
+        {
+          name: 'update_records_for_table',
+          description: 'Update up to 50 records in a table (official MCP-aligned format)',
+          inputSchema: getInputSchema(UpdateRecordsForTableArgsSchema),
         },
         {
           name: 'delete_records',
@@ -463,6 +470,16 @@ export class AirtableMCPServer implements IAirtableMCPServer {
             id: record.id,
             fields: record.fields,
           })));
+        }
+
+        case 'update_records_for_table': {
+          const args = UpdateRecordsForTableArgsSchema.parse(request.params.arguments);
+          const result = await updateRecordsForTable(this.airtableService, {
+            baseId: args.baseId,
+            tableId: args.tableId,
+            records: args.records,
+          });
+          return formatToolResponse(result);
         }
 
         case 'delete_records': {

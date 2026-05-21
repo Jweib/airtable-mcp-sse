@@ -539,6 +539,15 @@ export const UpdateRecordsArgsSchema = z.object({
   })),
 });
 
+export const UpdateRecordsForTableArgsSchema = z.object({
+  baseId: z.string().describe('Airtable base ID (app + 14 alphanumeric characters)'),
+  tableId: z.string().describe('Table ID (tbl + 14 chars) or table name'),
+  records: z.array(z.object({
+    id: z.string().describe('Record ID (rec + 14 alphanumeric characters)'),
+    cellValuesByFieldId: z.record(z.any()).describe('Field values to update, keyed by field ID (fld...)'),
+  })).min(1).max(50).describe('Records to update (1–50 per request)'),
+});
+
 export const DeleteRecordsArgsSchema = z.object({
   baseId: z.string(),
   tableId: z.string(),
@@ -653,6 +662,7 @@ export interface IAirtableService {
   createRecord(baseId: string, tableId: string, fields: FieldSet): Promise<AirtableRecord>;
   createRecordsPage(baseId: string, tableId: string, records: FieldSet[]): Promise<AirtableRecord[]>;
   updateRecords(baseId: string, tableId: string, records: { id: string; fields: FieldSet }[]): Promise<AirtableRecord[]>;
+  updateRecordsPage(baseId: string, tableId: string, records: { id: string; fields: FieldSet }[]): Promise<AirtableRecord[]>;
   deleteRecords(baseId: string, tableId: string, recordIds: string[]): Promise<{ id: string }[]>;
   createTable(baseId: string, name: string, fields: Field[], description?: string): Promise<Table>;
   updateTable(baseId: string, tableId: string, updates: { name?: string | undefined; description?: string | undefined }): Promise<Table>;
