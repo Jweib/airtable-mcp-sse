@@ -2,13 +2,19 @@ import { buildFilterFormula } from '../filters/builder.js';
 import { fieldsToCellValuesByFieldId } from '../mapping/recordMapper.js';
 import type { AirtableApiRecord } from '../mapping/recordMapper.js';
 import { decodeCursor, encodeCursor } from '../pagination/cursor.js';
-import type { BaseSchemaResponse, Table } from '../types.js';
-import type { ListRecordsPageOptions, ListRecordsPageResult } from '../types.js';
+import type {
+  BaseSchemaResponse,
+  ListRecordsPageOptions,
+  ListRecordsPageResult,
+  Table,
+} from '../types.js';
 
 const BASE_ID_PATTERN = /^app[a-zA-Z0-9]{14}$/;
 const RECORD_ID_PATTERN = /^rec[a-zA-Z0-9]{14}$/;
 const DEFAULT_PAGE_SIZE = 1000;
 const MAX_PAGE_SIZE = 8000;
+const AIRTABLE_REST_PAGE_SIZE_MAX = 100;
+const MAX_INTERNAL_REST_CALLS = 80;
 
 export interface ListRecordsForTableInput {
   baseId: string;
@@ -29,7 +35,7 @@ interface ValidatedListRecordsForTableInput extends Omit<ListRecordsForTableInpu
 
 export interface ListRecordsForTableRecord {
   id: string;
-  createdTime: string;
+  createdTime?: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   cellValuesByFieldId: Record<string, any>;
 }
@@ -161,12 +167,17 @@ const projectCellValues = (
   resolvedFieldIds: string[],
 ): ListRecordsForTableRecord => {
   const mapped = fieldsToCellValuesByFieldId(record, table);
+  const createdTime = mapped.createdTime ?? record.createdTime;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const buildRecord = (cellValuesByFieldId: Record<string, any>): ListRecordsForTableRecord => (
+    createdTime
+      ? { id: mapped.id, createdTime, cellValuesByFieldId }
+      : { id: mapped.id, cellValuesByFieldId }
+  );
+
   if (resolvedFieldIds.length === 0) {
-    return {
-      id: mapped.id,
-      createdTime: mapped.createdTime ?? record.createdTime ?? '',
-      cellValuesByFieldId: mapped.cellValuesByFieldId,
-    };
+    return buildRecord(mapped.cellValuesByFieldId);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -177,19 +188,14 @@ const projectCellValues = (
     }
   });
 
-  return {
-    id: mapped.id,
-    createdTime: mapped.createdTime ?? record.createdTime ?? '',
-    cellValuesByFieldId,
-  };
+  return buildRecord(cellValuesByFieldId);
 };
 
 export const buildListRecordsPageOptions = (
   table: Table,
   input: ValidatedListRecordsForTableInput,
-): ListRecordsPageOptions => {
+): Omit<ListRecordsPageOptions, 'pageSize' | 'offset'> => {
   const validated = validateListRecordsForTableInput(input);
-  const { resolvedFieldIds, apiFieldNames } = resolveFieldIdentifiers(table, validated.fieldIds);
 
   let filterByFormula: string | undefined;
   if (validated.filters) {
@@ -210,29 +216,97 @@ export const buildListRecordsPageOptions = (
     return entry;
   });
 
-  const pageOptions: ListRecordsPageOptions = {
-    pageSize: validated.pageSize,
-  };
+  const { apiFieldNames } = resolveFieldIdentifiers(table, validated.fieldIds);
+
+  const baseOptions: Omit<ListRecordsPageOptions, 'pageSize' | 'offset'> = {};
 
   if (filterByFormula) {
-    pageOptions.filterByFormula = filterByFormula;
+    baseOptions.filterByFormula = filterByFormula;
   }
   if (apiFieldNames.length > 0) {
-    pageOptions.fields = apiFieldNames;
-  }
-
-  const decodedOffset = validated.cursor ? decodeCursor(validated.cursor) : undefined;
-  if (decodedOffset) {
-    pageOptions.offset = decodedOffset;
+    baseOptions.fields = apiFieldNames;
   }
   if (validated.recordIds) {
-    pageOptions.recordIds = validated.recordIds;
+    baseOptions.recordIds = validated.recordIds;
   }
   if (sort) {
-    pageOptions.sort = sort;
+    baseOptions.sort = sort;
   }
 
-  return pageOptions;
+  return baseOptions;
+};
+
+interface AggregatedPageFetchResult {
+  records: ListRecordsPageResult['records'];
+  nextCursor?: string;
+  tableExhausted: boolean;
+}
+
+export const fetchAggregatedRecords = async (
+  service: ListRecordsForTableService,
+  baseId: string,
+  tableId: string,
+  targetPageSize: number,
+  basePageOptions: Omit<ListRecordsPageOptions, 'pageSize' | 'offset'>,
+  initialOffset?: string,
+): Promise<AggregatedPageFetchResult> => {
+  const aggregatedRecords: ListRecordsPageResult['records'] = [];
+  let currentOffset = initialOffset;
+  let nextCursor: string | undefined;
+  let restCalls = 0;
+
+  while (aggregatedRecords.length < targetPageSize && restCalls < MAX_INTERNAL_REST_CALLS) {
+    const remaining = targetPageSize - aggregatedRecords.length;
+    const requestPageSize = Math.min(remaining, AIRTABLE_REST_PAGE_SIZE_MAX);
+
+    const pageOptions: ListRecordsPageOptions = {
+      ...basePageOptions,
+      pageSize: requestPageSize,
+    };
+    if (currentOffset) {
+      pageOptions.offset = currentOffset;
+    }
+
+    restCalls += 1;
+    // eslint-disable-next-line no-await-in-loop
+    const { records, offset } = await service.listRecordsPage(baseId, tableId, pageOptions);
+    aggregatedRecords.push(...records);
+
+    if (aggregatedRecords.length >= targetPageSize) {
+      const trimmedRecords = aggregatedRecords.slice(0, targetPageSize);
+      const result: AggregatedPageFetchResult = {
+        records: trimmedRecords,
+        tableExhausted: !offset,
+      };
+      if (offset) {
+        const encoded = encodeCursor(offset);
+        if (encoded) {
+          result.nextCursor = encoded;
+        }
+      }
+      return result;
+    }
+
+    if (!offset) {
+      return {
+        records: aggregatedRecords,
+        tableExhausted: true,
+      };
+    }
+
+    currentOffset = offset;
+  }
+
+  if (restCalls >= MAX_INTERNAL_REST_CALLS) {
+    throw new Error(
+      `list_records_for_table exceeded maximum internal REST calls (${MAX_INTERNAL_REST_CALLS}).`,
+    );
+  }
+
+  return {
+    records: aggregatedRecords,
+    tableExhausted: true,
+  };
 };
 
 export const listRecordsForTable = async (
@@ -243,12 +317,16 @@ export const listRecordsForTable = async (
   const baseSchema = await service.getBaseSchema(validated.baseId);
   const table = resolveTable(baseSchema, validated.tableId);
   const { resolvedFieldIds } = resolveFieldIdentifiers(table, validated.fieldIds);
-  const pageOptions = buildListRecordsPageOptions(table, validated);
+  const basePageOptions = buildListRecordsPageOptions(table, validated);
+  const initialOffset = validated.cursor ? decodeCursor(validated.cursor) : undefined;
 
-  const { records, offset } = await service.listRecordsPage(
+  const { records, nextCursor, tableExhausted } = await fetchAggregatedRecords(
+    service,
     validated.baseId,
     table.id,
-    pageOptions,
+    validated.pageSize,
+    basePageOptions,
+    initialOffset,
   );
 
   const mappedRecords = records.map((record) => projectCellValues(record, table, resolvedFieldIds));
@@ -257,13 +335,10 @@ export const listRecordsForTable = async (
     records: mappedRecords,
   };
 
-  if (offset) {
-    const nextCursor = encodeCursor(offset);
-    if (nextCursor) {
-      output.nextCursor = nextCursor;
-    }
-    // V1: totalRecordCount is omitted when more pages exist (exact count would require full pagination).
-  } else {
+  if (nextCursor) {
+    output.nextCursor = nextCursor;
+    // V1: totalRecordCount omitted when more pages remain (nextCursor present).
+  } else if (tableExhausted) {
     output.metadata = { totalRecordCount: mappedRecords.length };
   }
 

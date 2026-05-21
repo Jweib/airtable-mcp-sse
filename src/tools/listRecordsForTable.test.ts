@@ -33,6 +33,12 @@ const apiRecord = (
   fields,
 });
 
+const recId = (index: number): string => `rec${index.toString().padStart(14, '0')}`;
+
+const makeRecords = (count: number, startIndex = 0) => Array.from({ length: count }, (_, index) => (
+  apiRecord(recId(startIndex + index), { Name: `User ${startIndex + index}` })
+));
+
 describe('listRecordsForTable', () => {
   let mockService: ListRecordsForTableService;
   let pageResult: ListRecordsPageResult;
@@ -150,10 +156,12 @@ describe('listRecordsForTable', () => {
     const result = await listRecordsForTable(mockService, {
       baseId,
       tableId,
+      pageSize: 1,
     });
 
     expect(result.nextCursor).toBe('itrNEXT/page');
     expect(result.metadata).toBeUndefined();
+    expect(mockService.listRecordsPage).toHaveBeenCalledTimes(1);
   });
 
   test('no API offset includes totalRecordCount and omits nextCursor', async () => {
@@ -246,5 +254,118 @@ describe('listRecordsForTable', () => {
       tableId,
       sort: [{ fieldId: 'Name', direction: 'invalid' as 'asc' }],
     })).rejects.toThrow("Invalid input: sort[0].direction must be 'asc' or 'desc', got 'invalid'");
+  });
+
+  test('pageSize=150 with offset on second page makes 2 REST calls and exposes nextCursor', async () => {
+    let callCount = 0;
+    vi.mocked(mockService.listRecordsPage).mockImplementation(async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        return { records: makeRecords(100), offset: 'itrPage2' };
+      }
+      if (callCount === 2) {
+        return { records: makeRecords(50, 100), offset: 'itrPage3' };
+      }
+      throw new Error('Unexpected extra REST call');
+    });
+
+    const result = await listRecordsForTable(mockService, {
+      baseId,
+      tableId,
+      pageSize: 150,
+    });
+
+    expect(callCount).toBe(2);
+    expect(result.records).toHaveLength(150);
+    expect(result.nextCursor).toBe('itrPage3');
+    expect(result.metadata).toBeUndefined();
+    expect(mockService.listRecordsPage).toHaveBeenNthCalledWith(
+      1,
+      baseId,
+      tableId,
+      expect.objectContaining({ pageSize: 100 }),
+    );
+    expect(mockService.listRecordsPage).toHaveBeenNthCalledWith(
+      2,
+      baseId,
+      tableId,
+      expect.objectContaining({ pageSize: 50, offset: 'itrPage2' }),
+    );
+  });
+
+  test('pageSize=150 without offset on second page returns 150 records and totalRecordCount', async () => {
+    let callCount = 0;
+    vi.mocked(mockService.listRecordsPage).mockImplementation(async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        return { records: makeRecords(100), offset: 'itrPage2' };
+      }
+      if (callCount === 2) {
+        return { records: makeRecords(50, 100), offset: undefined };
+      }
+      throw new Error('Unexpected extra REST call');
+    });
+
+    const result = await listRecordsForTable(mockService, {
+      baseId,
+      tableId,
+      pageSize: 150,
+    });
+
+    expect(callCount).toBe(2);
+    expect(result.records).toHaveLength(150);
+    expect(result.nextCursor).toBeUndefined();
+    expect(result.metadata).toEqual({ totalRecordCount: 150 });
+  });
+
+  test('pageSize=250 aggregates three REST pages and exposes nextCursor', async () => {
+    let callCount = 0;
+    vi.mocked(mockService.listRecordsPage).mockImplementation(async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        return { records: makeRecords(100), offset: 'itrPage2' };
+      }
+      if (callCount === 2) {
+        return { records: makeRecords(100, 100), offset: 'itrPage3' };
+      }
+      if (callCount === 3) {
+        return { records: makeRecords(50, 200), offset: 'itrPage4' };
+      }
+      throw new Error('Unexpected extra REST call');
+    });
+
+    const result = await listRecordsForTable(mockService, {
+      baseId,
+      tableId,
+      pageSize: 250,
+    });
+
+    expect(callCount).toBe(3);
+    expect(result.records).toHaveLength(250);
+    expect(result.nextCursor).toBe('itrPage4');
+    expect(mockService.listRecordsPage).toHaveBeenCalledTimes(3);
+  });
+
+  test('pageSize=50 uses a single REST call', async () => {
+    vi.mocked(mockService.listRecordsPage).mockResolvedValueOnce({
+      records: makeRecords(50),
+      offset: undefined,
+    });
+
+    const result = await listRecordsForTable(mockService, {
+      baseId,
+      tableId,
+      pageSize: 50,
+    });
+
+    expect(mockService.listRecordsPage).toHaveBeenCalledTimes(1);
+    expect(mockService.listRecordsPage).toHaveBeenCalledWith(
+      baseId,
+      tableId,
+      expect.objectContaining({ pageSize: 50 }),
+    );
+    expect(result.records).toHaveLength(50);
+    expect(result.nextCursor).toBeUndefined();
+    expect(result.metadata).toEqual({ totalRecordCount: 50 });
   });
 });
