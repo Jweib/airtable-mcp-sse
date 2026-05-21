@@ -111,7 +111,7 @@ export const escapeStringValue = (value: string): string => value
   .replace(/\r/g, '\\r')
   .replace(/\t/g, '\\t');
 
-const escapeFieldNameForFormula = (fieldName: string): string => {
+export const escapeFieldNameForFormula = (fieldName: string): string => {
   let escaped = fieldName;
   if (fieldName.includes('}')) {
     // eslint-disable-next-line no-console
@@ -156,7 +156,9 @@ const resolveField = (fieldIdentifier: unknown, tableSchema: Table): SchemaField
  * formulas (see Airtable support docs on filterByFormula). MCP filter operands use field IDs
  * or names; we resolve to the schema field and emit an escaped *name* reference for the API.
  */
-const getFieldReference = (field: SchemaField): string => `{${escapeFieldNameForFormula(field.name)}}`;
+export const getFieldReference = (field: SchemaField): string => `{${escapeFieldNameForFormula(field.name)}}`;
+
+export const getFieldReferenceByName = (fieldName: string): string => `{${escapeFieldNameForFormula(fieldName)}}`;
 
 const getAllowedOperatorsForFieldType = (fieldType: string): string[] => {
   const allowed = new Set<string>(UNIVERSAL_OPERATORS);

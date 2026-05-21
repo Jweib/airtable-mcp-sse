@@ -1,7 +1,13 @@
 import { buildFilterFormula } from '../filters/builder.js';
-import { fieldsToCellValuesByFieldId } from '../mapping/recordMapper.js';
-import type { AirtableApiRecord } from '../mapping/recordMapper.js';
-import { decodeCursor, encodeCursor } from '../pagination/cursor.js';
+import { fetchAggregatedRecords } from '../internal/paginatedFetch.js';
+import { projectRecordToOfficialFormat } from '../internal/recordProjection.js';
+import {
+  RECORD_ID_PATTERN,
+  validateBaseId,
+  validatePageSize,
+  validationError,
+} from '../internal/validation.js';
+import { decodeCursor } from '../pagination/cursor.js';
 import type {
   BaseSchemaResponse,
   ListRecordsPageOptions,
@@ -9,12 +15,7 @@ import type {
   Table,
 } from '../types.js';
 
-const BASE_ID_PATTERN = /^app[a-zA-Z0-9]{14}$/;
-const RECORD_ID_PATTERN = /^rec[a-zA-Z0-9]{14}$/;
-const DEFAULT_PAGE_SIZE = 1000;
-const MAX_PAGE_SIZE = 8000;
-const AIRTABLE_REST_PAGE_SIZE_MAX = 100;
-const MAX_INTERNAL_REST_CALLS = 80;
+export { fetchAggregatedRecords } from '../internal/paginatedFetch.js';
 
 export interface ListRecordsForTableInput {
   baseId: string;
@@ -57,23 +58,11 @@ export interface ListRecordsForTableService {
 
 export type { ListRecordsPageOptions, ListRecordsPageResult };
 
-const validationError = (message: string): never => {
-  throw new Error(`Invalid input: ${message}`);
-};
-
 export const validateListRecordsForTableInput = (input: ListRecordsForTableInput): ValidatedListRecordsForTableInput => {
-  if (!BASE_ID_PATTERN.test(input.baseId)) {
-    validationError(`baseId must match app + 14 alphanumeric characters, got '${input.baseId}'`);
-  }
+  validateBaseId(input.baseId);
 
   if (!input.tableId || typeof input.tableId !== 'string') {
     validationError('tableId is required');
-  }
-
-  if (input.pageSize !== undefined) {
-    if (!Number.isInteger(input.pageSize) || input.pageSize < 1 || input.pageSize > MAX_PAGE_SIZE) {
-      validationError(`pageSize must be between 1 and ${MAX_PAGE_SIZE}, got ${input.pageSize}`);
-    }
   }
 
   if (input.recordIds) {
@@ -97,7 +86,7 @@ export const validateListRecordsForTableInput = (input: ListRecordsForTableInput
   const validated: ValidatedListRecordsForTableInput = {
     baseId: input.baseId,
     tableId: input.tableId,
-    pageSize: input.pageSize ?? DEFAULT_PAGE_SIZE,
+    pageSize: validatePageSize(input.pageSize),
   };
 
   if (input.fieldIds !== undefined) {
@@ -161,48 +150,16 @@ export const resolveFieldIdentifiers = (
   return { resolvedFieldIds, apiFieldNames };
 };
 
-const projectCellValues = (
-  record: AirtableApiRecord,
-  table: Table,
-  resolvedFieldIds: string[],
-): ListRecordsForTableRecord => {
-  const mapped = fieldsToCellValuesByFieldId(record, table);
-  const createdTime = mapped.createdTime ?? record.createdTime;
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const buildRecord = (cellValuesByFieldId: Record<string, any>): ListRecordsForTableRecord => (
-    createdTime
-      ? { id: mapped.id, createdTime, cellValuesByFieldId }
-      : { id: mapped.id, cellValuesByFieldId }
-  );
-
-  if (resolvedFieldIds.length === 0) {
-    return buildRecord(mapped.cellValuesByFieldId);
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const cellValuesByFieldId: Record<string, any> = {};
-  resolvedFieldIds.forEach((fieldId) => {
-    if (fieldId in mapped.cellValuesByFieldId) {
-      cellValuesByFieldId[fieldId] = mapped.cellValuesByFieldId[fieldId];
-    }
-  });
-
-  return buildRecord(cellValuesByFieldId);
-};
-
 export const buildListRecordsPageOptions = (
   table: Table,
   input: ValidatedListRecordsForTableInput,
 ): Omit<ListRecordsPageOptions, 'pageSize' | 'offset'> => {
-  const validated = validateListRecordsForTableInput(input);
-
   let filterByFormula: string | undefined;
-  if (validated.filters) {
-    filterByFormula = buildFilterFormula(validated.filters, table);
+  if (input.filters) {
+    filterByFormula = buildFilterFormula(input.filters, table);
   }
 
-  const sort = validated.sort?.map((sortOption) => {
+  const sort = input.sort?.map((sortOption) => {
     const field = table.fields.find(
       (candidate) => candidate.id === sortOption.fieldId || candidate.name === sortOption.fieldId,
     );
@@ -216,7 +173,7 @@ export const buildListRecordsPageOptions = (
     return entry;
   });
 
-  const { apiFieldNames } = resolveFieldIdentifiers(table, validated.fieldIds);
+  const { apiFieldNames } = resolveFieldIdentifiers(table, input.fieldIds);
 
   const baseOptions: Omit<ListRecordsPageOptions, 'pageSize' | 'offset'> = {};
 
@@ -226,87 +183,14 @@ export const buildListRecordsPageOptions = (
   if (apiFieldNames.length > 0) {
     baseOptions.fields = apiFieldNames;
   }
-  if (validated.recordIds) {
-    baseOptions.recordIds = validated.recordIds;
+  if (input.recordIds) {
+    baseOptions.recordIds = input.recordIds;
   }
   if (sort) {
     baseOptions.sort = sort;
   }
 
   return baseOptions;
-};
-
-interface AggregatedPageFetchResult {
-  records: ListRecordsPageResult['records'];
-  nextCursor?: string;
-  tableExhausted: boolean;
-}
-
-export const fetchAggregatedRecords = async (
-  service: ListRecordsForTableService,
-  baseId: string,
-  tableId: string,
-  targetPageSize: number,
-  basePageOptions: Omit<ListRecordsPageOptions, 'pageSize' | 'offset'>,
-  initialOffset?: string,
-): Promise<AggregatedPageFetchResult> => {
-  const aggregatedRecords: ListRecordsPageResult['records'] = [];
-  let currentOffset = initialOffset;
-  let nextCursor: string | undefined;
-  let restCalls = 0;
-
-  while (aggregatedRecords.length < targetPageSize && restCalls < MAX_INTERNAL_REST_CALLS) {
-    const remaining = targetPageSize - aggregatedRecords.length;
-    const requestPageSize = Math.min(remaining, AIRTABLE_REST_PAGE_SIZE_MAX);
-
-    const pageOptions: ListRecordsPageOptions = {
-      ...basePageOptions,
-      pageSize: requestPageSize,
-    };
-    if (currentOffset) {
-      pageOptions.offset = currentOffset;
-    }
-
-    restCalls += 1;
-    // eslint-disable-next-line no-await-in-loop
-    const { records, offset } = await service.listRecordsPage(baseId, tableId, pageOptions);
-    aggregatedRecords.push(...records);
-
-    if (aggregatedRecords.length >= targetPageSize) {
-      const trimmedRecords = aggregatedRecords.slice(0, targetPageSize);
-      const result: AggregatedPageFetchResult = {
-        records: trimmedRecords,
-        tableExhausted: !offset,
-      };
-      if (offset) {
-        const encoded = encodeCursor(offset);
-        if (encoded) {
-          result.nextCursor = encoded;
-        }
-      }
-      return result;
-    }
-
-    if (!offset) {
-      return {
-        records: aggregatedRecords,
-        tableExhausted: true,
-      };
-    }
-
-    currentOffset = offset;
-  }
-
-  if (restCalls >= MAX_INTERNAL_REST_CALLS) {
-    throw new Error(
-      `list_records_for_table exceeded maximum internal REST calls (${MAX_INTERNAL_REST_CALLS}).`,
-    );
-  }
-
-  return {
-    records: aggregatedRecords,
-    tableExhausted: true,
-  };
 };
 
 export const listRecordsForTable = async (
@@ -327,9 +211,12 @@ export const listRecordsForTable = async (
     validated.pageSize,
     basePageOptions,
     initialOffset,
+    'list_records_for_table',
   );
 
-  const mappedRecords = records.map((record) => projectCellValues(record, table, resolvedFieldIds));
+  const mappedRecords = records.map(
+    (record) => projectRecordToOfficialFormat(record, table, resolvedFieldIds),
+  );
 
   const output: ListRecordsForTableOutput = {
     records: mappedRecords,
@@ -337,7 +224,6 @@ export const listRecordsForTable = async (
 
   if (nextCursor) {
     output.nextCursor = nextCursor;
-    // V1: totalRecordCount omitted when more pages remain (nextCursor present).
   } else if (tableExhausted) {
     output.metadata = { totalRecordCount: mappedRecords.length };
   }
