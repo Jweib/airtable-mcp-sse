@@ -578,6 +578,43 @@ export interface ListRecordsOptions {
   sort?: z.infer<typeof ListRecordsArgsSchema.shape.sort>;
 }
 
+export const ListRecordsForTableArgsSchema = z.object({
+  baseId: z.string().describe('Airtable base ID (app + 14 alphanumeric characters)'),
+  tableId: z.string().describe('Table ID (tbl + 14 chars) or table name'),
+  fieldIds: z.array(z.string()).optional().describe('Field IDs (fld...) or field names to return'),
+  pageSize: z.number().int().optional().describe('Records per page (default 1000, max 8000)'),
+  cursor: z.string().optional().describe('Opaque pagination cursor from a previous response nextCursor'),
+  sort: z.array(z.object({
+    fieldId: z.string().describe('Field ID or name to sort by'),
+    direction: z.enum(['asc', 'desc']).optional().describe('Sort direction'),
+  })).optional(),
+  recordIds: z.array(z.string()).optional().describe('Filter by record IDs (rec + 14 alphanumeric characters)'),
+  filters: z.unknown().optional().describe('Structured filter tree translated to filterByFormula'),
+});
+
+export type ListRecordsForTableArgs = z.infer<typeof ListRecordsForTableArgsSchema>;
+
+export interface ListRecordsPageOptions {
+  pageSize?: number;
+  offset?: string;
+  filterByFormula?: string;
+  recordIds?: string[];
+  sort?: Array<{ field: string; direction?: 'asc' | 'desc' }>;
+  fields?: string[];
+}
+
+export interface ListRecordsPageRecord {
+  id: string;
+  createdTime: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  fields: Record<string, any>;
+}
+
+export interface ListRecordsPageResult {
+  records: ListRecordsPageRecord[];
+  offset?: string;
+}
+
 export const DescribeBaseArgsSchema = z.object({
   baseId: z.string(),
   detailLevel: TableDetailLevelSchema.optional().default('full'),
@@ -593,6 +630,7 @@ export interface IAirtableService {
   describeAllBases(): Promise<AllBasesWithTables>;
   getBaseSchema(baseId: string): Promise<BaseSchemaResponse>;
   listRecords(baseId: string, tableId: string, options?: ListRecordsOptions): Promise<AirtableRecord[]>;
+  listRecordsPage(baseId: string, tableId: string, options?: ListRecordsPageOptions): Promise<ListRecordsPageResult>;
   getRecord(baseId: string, tableId: string, recordId: string): Promise<AirtableRecord>;
   createRecord(baseId: string, tableId: string, fields: FieldSet): Promise<AirtableRecord>;
   updateRecords(baseId: string, tableId: string, records: { id: string; fields: FieldSet }[]): Promise<AirtableRecord[]>;

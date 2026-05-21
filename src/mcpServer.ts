@@ -14,6 +14,7 @@ import { zodToJsonSchema } from 'zod-to-json-schema';
 import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import {
   ListRecordsArgsSchema,
+  ListRecordsForTableArgsSchema,
   ListTablesArgsSchema,
   DescribeTableArgsSchema,
   GetRecordArgsSchema,
@@ -32,6 +33,7 @@ import {
   IAirtableService,
   IAirtableMCPServer,
 } from './types.js';
+import { listRecordsForTable } from './tools/listRecordsForTable.js';
 
 const getInputSchema = (schema: z.ZodType<object>): ListToolsResult['tools'][0]['inputSchema'] => {
   const jsonSchema = zodToJsonSchema(schema);
@@ -176,6 +178,11 @@ export class AirtableMCPServer implements IAirtableMCPServer {
           inputSchema: getInputSchema(ListRecordsArgsSchema),
         },
         {
+          name: 'list_records_for_table',
+          description: 'List records from a table (official MCP-aligned format)',
+          inputSchema: getInputSchema(ListRecordsForTableArgsSchema),
+        },
+        {
           name: 'search_records',
           description: 'Search for records containing specific text',
           inputSchema: getInputSchema(SearchRecordsArgsSchema),
@@ -269,6 +276,26 @@ export class AirtableMCPServer implements IAirtableMCPServer {
             },
           );
           return formatToolResponse(records);
+        }
+
+        case 'list_records_for_table': {
+          const args = ListRecordsForTableArgsSchema.parse(request.params.arguments);
+          const result = await listRecordsForTable(this.airtableService, {
+            baseId: args.baseId,
+            tableId: args.tableId,
+            pageSize: args.pageSize ?? 1000,
+            ...(args.cursor !== undefined ? { cursor: args.cursor } : {}),
+            ...(args.fieldIds !== undefined ? { fieldIds: args.fieldIds } : {}),
+            ...(args.sort !== undefined ? {
+              sort: args.sort.map((sortOption) => ({
+                fieldId: sortOption.fieldId,
+                ...(sortOption.direction !== undefined ? { direction: sortOption.direction } : {}),
+              })),
+            } : {}),
+            ...(args.recordIds !== undefined ? { recordIds: args.recordIds } : {}),
+            ...(args.filters !== undefined ? { filters: args.filters } : {}),
+          });
+          return formatToolResponse(result);
         }
 
         case 'search_records': {

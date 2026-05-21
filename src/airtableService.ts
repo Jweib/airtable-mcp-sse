@@ -5,6 +5,8 @@ import {
   ListBasesResponse,
   BaseSchemaResponse,
   ListRecordsOptions,
+  ListRecordsPageOptions,
+  ListRecordsPageResult,
   Field,
   Table,
   AirtableRecord,
@@ -131,6 +133,80 @@ export class AirtableService implements IAirtableService {
     } while (offset);
 
     return allRecords;
+  }
+
+  private static buildRecordIdsFilterFormula(recordIds: string[]): string {
+    return `OR(${recordIds.map((recordId) => `RECORD_ID()="${recordId.replace(/"/g, '\\"')}"`).join(', ')})`;
+  }
+
+  private static mergeFilterFormulas(...formulas: Array<string | undefined>): string | undefined {
+    const parts = formulas.filter((formula): formula is string => Boolean(formula));
+    if (parts.length === 0) {
+      return undefined;
+    }
+    if (parts.length === 1) {
+      return parts[0];
+    }
+    return `AND(${parts.join(', ')})`;
+  }
+
+  async listRecordsPage(
+    baseId: string,
+    tableId: string,
+    options: ListRecordsPageOptions = {},
+  ): Promise<ListRecordsPageResult> {
+    const queryParams = new URLSearchParams();
+
+    if (options.pageSize) {
+      queryParams.append('pageSize', options.pageSize.toString());
+    }
+    if (options.offset) {
+      queryParams.append('offset', options.offset);
+    }
+    if (options.fields && options.fields.length > 0) {
+      options.fields.forEach((fieldName) => {
+        queryParams.append('fields[]', fieldName);
+      });
+    }
+    if (options.sort && options.sort.length > 0) {
+      options.sort.forEach((sortOption, index) => {
+        queryParams.append(`sort[${index}][field]`, sortOption.field);
+        if (sortOption.direction) {
+          queryParams.append(`sort[${index}][direction]`, sortOption.direction);
+        }
+      });
+    }
+
+    const recordIdsFormula = options.recordIds && options.recordIds.length > 0
+      ? AirtableService.buildRecordIdsFilterFormula(options.recordIds)
+      : undefined;
+    const filterByFormula = AirtableService.mergeFilterFormulas(
+      options.filterByFormula,
+      recordIdsFormula,
+    );
+    if (filterByFormula) {
+      queryParams.append('filterByFormula', filterByFormula);
+    }
+
+    const response = await this.fetchFromAPI(
+      `/v0/${baseId}/${tableId}?${queryParams.toString()}`,
+      z.object({
+        records: z.array(z.object({
+          id: z.string(),
+          createdTime: z.string(),
+          fields: z.record(z.any()),
+        })),
+        offset: z.string().optional(),
+      }),
+    );
+
+    const result: ListRecordsPageResult = {
+      records: response.records,
+    };
+    if (response.offset) {
+      result.offset = response.offset;
+    }
+    return result;
   }
 
   async getRecord(baseId: string, tableId: string, recordId: string): Promise<AirtableRecord> {
