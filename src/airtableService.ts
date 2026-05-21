@@ -310,7 +310,16 @@ export class AirtableService implements IAirtableService {
   }
 
   async deleteRecords(baseId: string, tableId: string, recordIds: string[]): Promise<{ id: string }[]> {
-    const queryString = recordIds.map((id) => `records[]=${id}`).join('&');
+    const records = await this.deleteRecordsPage(baseId, tableId, recordIds);
+    return records.map(({ id }) => ({ id }));
+  }
+
+  async deleteRecordsPage(
+    baseId: string,
+    tableId: string,
+    recordIds: string[],
+  ): Promise<Array<{ id: string; deleted: boolean }>> {
+    const queryString = recordIds.map((id) => `records[]=${encodeURIComponent(id)}`).join('&');
     const response = await this.fetchFromAPI(
       `/v0/${baseId}/${tableId}?${queryString}`,
       z.object({ records: z.array(z.object({ id: z.string(), deleted: z.boolean() })) }),
@@ -318,7 +327,7 @@ export class AirtableService implements IAirtableService {
         method: 'DELETE',
       },
     );
-    return response.records.map(({ id }) => ({ id }));
+    return response.records;
   }
 
   async createTable(baseId: string, name: string, fields: Field[], description?: string): Promise<Table> {

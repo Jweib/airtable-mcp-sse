@@ -24,6 +24,7 @@ import {
   UpdateRecordsArgsSchema,
   UpdateRecordsForTableArgsSchema,
   DeleteRecordsArgsSchema,
+  DeleteRecordsForTableArgsSchema,
   CreateTableArgsSchema,
   UpdateTableArgsSchema,
   CreateFieldArgsSchema,
@@ -40,6 +41,7 @@ import { listRecordsForTable } from './tools/listRecordsForTable.js';
 import { searchRecords } from './tools/searchRecords.js';
 import { createRecordsForTable } from './tools/createRecordsForTable.js';
 import { updateRecordsForTable } from './tools/updateRecordsForTable.js';
+import { deleteRecordsForTable } from './tools/deleteRecordsForTable.js';
 import { getTableSchema } from './tools/getTableSchema.js';
 
 const getInputSchema = (schema: z.ZodType<object>): ListToolsResult['tools'][0]['inputSchema'] => {
@@ -257,6 +259,11 @@ export class AirtableMCPServer implements IAirtableMCPServer {
           name: 'delete_records',
           description: 'Delete records from a table',
           inputSchema: getInputSchema(DeleteRecordsArgsSchema),
+        },
+        {
+          name: 'delete_records_for_table',
+          description: 'Delete up to 50 records from a table (official MCP-aligned format)',
+          inputSchema: getInputSchema(DeleteRecordsForTableArgsSchema),
         },
         {
           name: 'create_table',
@@ -488,6 +495,16 @@ export class AirtableMCPServer implements IAirtableMCPServer {
           return formatToolResponse(records.map((record) => ({
             id: record.id,
           })));
+        }
+
+        case 'delete_records_for_table': {
+          const args = DeleteRecordsForTableArgsSchema.parse(request.params.arguments);
+          const result = await deleteRecordsForTable(this.airtableService, {
+            baseId: args.baseId,
+            tableId: args.tableId,
+            recordIds: args.recordIds,
+          });
+          return formatToolResponse(result);
         }
 
         case 'create_table': {
