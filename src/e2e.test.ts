@@ -16,6 +16,11 @@ import { AirtableService } from './airtableService.js';
 
 // Run me with:
 // AIRTABLE_API_KEY=pat1234.abcd RUN_INTEGRATION=TRUE npm run test -- 'src/e2e.test.ts'
+const parseListBasesToolResult = (text: string): Array<{ id: string; name: string; permissionLevel: string }> => {
+  const parsed = JSON.parse(text) as { bases?: Array<{ id: string; name: string; permissionLevel: string }> };
+  return parsed.bases ?? [];
+};
+
 (process.env.RUN_INTEGRATION ? describe : describe.skip)('AirtableMCPServer Integration', () => {
   let server: AirtableMCPServer;
   let serverTransport: InMemoryTransport;
@@ -104,9 +109,10 @@ import { AirtableService } from './airtableService.js';
     });
 
     const content = JSON.parse(result.content[0]!.text as string);
-    expect(Array.isArray(content)).toBe(true);
-    expect(content.length).toBeGreaterThan(0);
-    expect(content[0]).toMatchObject({
+    expect(content).toHaveProperty('bases');
+    expect(Array.isArray(content.bases)).toBe(true);
+    expect(content.bases.length).toBeGreaterThan(0);
+    expect(content.bases[0]).toMatchObject({
       id: expect.any(String),
       name: expect.any(String),
       permissionLevel: expect.any(String),
@@ -125,7 +131,7 @@ import { AirtableService } from './airtableService.js';
       },
     });
 
-    const bases = JSON.parse(basesResult.content[0]!.text as string);
+    const bases = parseListBasesToolResult(basesResult.content[0]!.text as string);
     expect(bases.length).toBeGreaterThan(0);
     const baseId = bases[0]!.id;
 
@@ -174,7 +180,7 @@ import { AirtableService } from './airtableService.js';
       },
     });
 
-    const bases = JSON.parse(basesResult.content[0]!.text as string);
+    const bases = parseListBasesToolResult(basesResult.content[0]!.text as string);
     expect(bases.length).toBeGreaterThan(0);
     const baseId = bases[0]!.id;
 
@@ -245,7 +251,7 @@ import { AirtableService } from './airtableService.js';
       },
     });
 
-    const bases = JSON.parse(basesResult.content[0]!.text as string);
+    const bases = parseListBasesToolResult(basesResult.content[0]!.text as string);
     expect(bases.length).toBeGreaterThan(0);
     const baseId = bases[0]!.id;
 
@@ -321,7 +327,7 @@ import { AirtableService } from './airtableService.js';
       },
     });
 
-    const bases = JSON.parse(basesResult.content[0]!.text as string);
+    const bases = parseListBasesToolResult(basesResult.content[0]!.text as string);
     expect(bases.length).toBeGreaterThan(0);
     const baseId = bases[0]!.id;
 
@@ -347,9 +353,16 @@ import { AirtableService } from './airtableService.js';
     }
 
     const tableId = tables[0]!.id;
-    const viewId = tables[0]!.views[0]!.id;
+    const textField = tables[0]!.fields?.find(
+      (field: { type: string }) => field.type === 'singleLineText'
+        || field.type === 'multilineText',
+    );
+    if (!textField) {
+      // eslint-disable-next-line no-console
+      console.warn('Skipping search_records test: no text field found');
+      return;
+    }
 
-    // Search records using the view
     const result = await sendRequest<CallToolResult>({
       jsonrpc: '2.0',
       id: '3',
@@ -358,10 +371,10 @@ import { AirtableService } from './airtableService.js';
         name: 'search_records',
         arguments: {
           baseId,
-          tableId,
-          view: viewId,
-          searchTerm: 'a', // Using a common letter to increase chances of finding matches
-          maxRecords: 10,
+          table: tableId,
+          query: 'a',
+          fields: [textField.id],
+          pageSize: 10,
         },
       },
     });
@@ -376,7 +389,8 @@ import { AirtableService } from './airtableService.js';
     });
 
     const content = JSON.parse(result.content[0]!.text as string);
-    expect(Array.isArray(content)).toBe(true);
+    expect(content).toHaveProperty('records');
+    expect(Array.isArray(content.records)).toBe(true);
     // Records might be empty if no matches or if the view has filters that exclude all records
   });
 

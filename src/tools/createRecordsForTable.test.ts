@@ -2,10 +2,10 @@ import {
   describe, expect, test, vi, beforeEach,
 } from 'vitest';
 import type { BaseSchemaResponse, Table } from '../types.js';
+import { resolveCellValuesSelectChoices } from '../internal/selectChoiceResolver.js';
 import {
   AIRTABLE_REST_CREATE_BATCH_SIZE,
   createRecordsForTable,
-  resolveCellValuesSelectChoices,
 } from './createRecordsForTable.js';
 import type { CreateRecordsForTableService } from './createRecordsForTable.js';
 import { cellValuesByFieldIdToFields, fieldsToCellValuesByFieldId } from '../mapping/recordMapper.js';

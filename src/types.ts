@@ -505,6 +505,16 @@ export const GetTableSchemaArgsSchema = z.object({
 
 export type GetTableSchemaArgs = z.infer<typeof GetTableSchemaArgsSchema>;
 
+export const ListBasesArgsSchema = z.object({}).describe('No parameters');
+
+export const SearchBasesArgsSchema = z.object({
+  query: z.string().describe('Search text matched against base names (case-insensitive contains)'),
+});
+
+export const ListTablesForBaseArgsSchema = z.object({
+  baseId: z.string().describe('Airtable base ID (app + 14 alphanumeric characters)'),
+});
+
 export const ListTablesArgsSchema = z.object({
   baseId: z.string(),
   detailLevel: TableDetailLevelSchema.optional().default('full'),

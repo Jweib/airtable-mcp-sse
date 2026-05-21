@@ -30,6 +30,9 @@ import {
   CreateFieldArgsSchema,
   UpdateFieldArgsSchema,
   SearchRecordsArgsSchema,
+  ListBasesArgsSchema,
+  SearchBasesArgsSchema,
+  ListTablesForBaseArgsSchema,
   DescribeBaseArgsSchema,
   DescribeAllBasesArgsSchema,
   Table,
@@ -43,6 +46,9 @@ import { createRecordsForTable } from './tools/createRecordsForTable.js';
 import { updateRecordsForTable } from './tools/updateRecordsForTable.js';
 import { deleteRecordsForTable } from './tools/deleteRecordsForTable.js';
 import { getTableSchema } from './tools/getTableSchema.js';
+import { listBases } from './tools/listBases.js';
+import { searchBases } from './tools/searchBases.js';
+import { listTablesForBase } from './tools/listTablesForBase.js';
 
 const getInputSchema = (schema: z.ZodType<object>): ListToolsResult['tools'][0]['inputSchema'] => {
   const jsonSchema = zodToJsonSchema(schema);
@@ -198,12 +204,13 @@ export class AirtableMCPServer implements IAirtableMCPServer {
         },
         {
           name: 'list_bases',
-          description: 'List all accessible Airtable bases',
-          inputSchema: {
-            type: 'object',
-            properties: {},
-            required: [],
-          },
+          description: 'List all accessible Airtable bases (official MCP-aligned format)',
+          inputSchema: getInputSchema(ListBasesArgsSchema),
+        },
+        {
+          name: 'search_bases',
+          description: 'Search accessible bases by name (official MCP-aligned format)',
+          inputSchema: getInputSchema(SearchBasesArgsSchema),
         },
         {
           name: 'describe_base',
@@ -219,6 +226,11 @@ export class AirtableMCPServer implements IAirtableMCPServer {
           name: 'list_tables',
           description: 'List all tables in a specific base',
           inputSchema: getInputSchema(ListTablesArgsSchema),
+        },
+        {
+          name: 'list_tables_for_base',
+          description: 'List table identifiers in a base (official MCP-aligned compact format)',
+          inputSchema: getInputSchema(ListTablesForBaseArgsSchema),
         },
         {
           name: 'describe_table',
@@ -341,12 +353,15 @@ export class AirtableMCPServer implements IAirtableMCPServer {
         }
 
         case 'list_bases': {
-          const { bases } = await this.airtableService.listBases();
-          return formatToolResponse(bases.map((base) => ({
-            id: base.id,
-            name: base.name,
-            permissionLevel: base.permissionLevel,
-          })));
+          ListBasesArgsSchema.parse(request.params.arguments ?? {});
+          const result = await listBases(this.airtableService);
+          return formatToolResponse(result);
+        }
+
+        case 'search_bases': {
+          const args = SearchBasesArgsSchema.parse(request.params.arguments);
+          const result = await searchBases(this.airtableService, { query: args.query });
+          return formatToolResponse(result);
         }
 
         case 'describe_base': {
@@ -358,6 +373,12 @@ export class AirtableMCPServer implements IAirtableMCPServer {
         case 'describe_all_bases': {
           const bases = await this.airtableService.describeAllBases();
           return formatToolResponse(bases);
+        }
+
+        case 'list_tables_for_base': {
+          const args = ListTablesForBaseArgsSchema.parse(request.params.arguments);
+          const result = await listTablesForBase(this.airtableService, { baseId: args.baseId });
+          return formatToolResponse(result);
         }
 
         case 'list_tables': {
