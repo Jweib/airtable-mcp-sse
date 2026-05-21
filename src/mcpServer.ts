@@ -20,6 +20,7 @@ import {
   DescribeTableArgsSchema,
   GetRecordArgsSchema,
   CreateRecordArgsSchema,
+  CreateRecordsForTableArgsSchema,
   UpdateRecordsArgsSchema,
   DeleteRecordsArgsSchema,
   CreateTableArgsSchema,
@@ -35,6 +36,8 @@ import {
   IAirtableMCPServer,
 } from './types.js';
 import { listRecordsForTable } from './tools/listRecordsForTable.js';
+import { searchRecords } from './tools/searchRecords.js';
+import { createRecordsForTable } from './tools/createRecordsForTable.js';
 import { getTableSchema } from './tools/getTableSchema.js';
 
 const getInputSchema = (schema: z.ZodType<object>): ListToolsResult['tools'][0]['inputSchema'] => {
@@ -234,6 +237,11 @@ export class AirtableMCPServer implements IAirtableMCPServer {
           inputSchema: getInputSchema(CreateRecordArgsSchema),
         },
         {
+          name: 'create_records_for_table',
+          description: 'Create up to 50 records in a table (official MCP-aligned format)',
+          inputSchema: getInputSchema(CreateRecordsForTableArgsSchema),
+        },
+        {
           name: 'update_records',
           description: 'Update up to 10 records in a table',
           inputSchema: getInputSchema(UpdateRecordsArgsSchema),
@@ -307,15 +315,15 @@ export class AirtableMCPServer implements IAirtableMCPServer {
 
         case 'search_records': {
           const args = SearchRecordsArgsSchema.parse(request.params.arguments);
-          const records = await this.airtableService.searchRecords(
-            args.baseId,
-            args.tableId,
-            args.searchTerm,
-            args.fieldIds,
-            args.maxRecords,
-            args.view,
-          );
-          return formatToolResponse(records);
+          const result = await searchRecords(this.airtableService, {
+            baseId: args.baseId,
+            table: args.table,
+            query: args.query,
+            fields: args.fields,
+            ...(args.pageSize !== undefined ? { pageSize: args.pageSize } : {}),
+            ...(args.cursor !== undefined ? { cursor: args.cursor } : {}),
+          });
+          return formatToolResponse(result);
         }
 
         case 'list_bases': {
@@ -436,6 +444,16 @@ export class AirtableMCPServer implements IAirtableMCPServer {
             id: record.id,
             fields: record.fields,
           });
+        }
+
+        case 'create_records_for_table': {
+          const args = CreateRecordsForTableArgsSchema.parse(request.params.arguments);
+          const result = await createRecordsForTable(this.airtableService, {
+            baseId: args.baseId,
+            tableId: args.tableId,
+            records: args.records,
+          });
+          return formatToolResponse(result);
         }
 
         case 'update_records': {

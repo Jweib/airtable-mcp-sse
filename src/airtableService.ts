@@ -227,6 +227,40 @@ export class AirtableService implements IAirtableService {
     );
   }
 
+  async createRecordsPage(
+    baseId: string,
+    tableId: string,
+    records: FieldSet[],
+  ): Promise<Array<AirtableRecord & { createdTime?: string }>> {
+    const response = await this.fetchFromAPI(
+      `/v0/${baseId}/${tableId}`,
+      z.object({
+        records: z.array(z.object({
+          id: z.string(),
+          createdTime: z.string().optional(),
+          fields: z.record(z.any()),
+        })),
+      }),
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          records: records.map((fields) => ({ fields })),
+        }),
+      },
+    );
+
+    return response.records.map((record) => {
+      const mapped: AirtableRecord & { createdTime?: string } = {
+        id: record.id,
+        fields: record.fields,
+      };
+      if (record.createdTime) {
+        mapped.createdTime = record.createdTime;
+      }
+      return mapped;
+    });
+  }
+
   async updateRecords(
     baseId: string,
     tableId: string,

@@ -469,12 +469,15 @@ export const ListRecordsArgsSchema = z.object({
 });
 
 export const SearchRecordsArgsSchema = z.object({
-  baseId: z.string(),
-  tableId: z.string(),
-  view: z.string().optional().describe('View name or ID to use for filtering and sorting records. If provided, the view\'s filters and sorts will be applied.'),
-  searchTerm: z.string().describe('Text to search for in records'),
-  fieldIds: z.array(z.string()).optional().describe('Specific field ids to search in. If not provided, searches all text-based fields.'),
-  maxRecords: z.number().optional().describe('Maximum number of records to return. Defaults to 100.'),
+  baseId: z.string().describe('Airtable base ID (app + 14 alphanumeric characters)'),
+  table: z.string().describe('Table ID (tbl + 14 chars) or table name'),
+  query: z.string().describe('Search query text (tokenized, case-insensitive)'),
+  fields: z.union([
+    z.literal('ALL_SEARCHABLE_FIELDS'),
+    z.array(z.string()).min(1),
+  ]).describe('Field IDs or names to search, or ALL_SEARCHABLE_FIELDS'),
+  pageSize: z.number().int().optional().describe('Records per page (default 1000, max 8000)'),
+  cursor: z.string().optional().describe('Opaque pagination cursor from a previous response nextCursor'),
 });
 
 export const TableDetailLevelSchema = z.enum(['tableIdentifiersOnly', 'identifiersOnly', 'full']).describe(`Detail level for table information:
@@ -517,6 +520,14 @@ export const CreateRecordArgsSchema = z.object({
   baseId: z.string(),
   tableId: z.string(),
   fields: z.record(z.any()),
+});
+
+export const CreateRecordsForTableArgsSchema = z.object({
+  baseId: z.string().describe('Airtable base ID (app + 14 alphanumeric characters)'),
+  tableId: z.string().describe('Table ID (tbl + 14 chars) or table name'),
+  records: z.array(z.object({
+    cellValuesByFieldId: z.record(z.any()).describe('Field values keyed by field ID (fld...)'),
+  })).min(1).max(50).describe('Records to create (1–50 per request)'),
 });
 
 export const UpdateRecordsArgsSchema = z.object({
@@ -640,6 +651,7 @@ export interface IAirtableService {
   listRecordsPage(baseId: string, tableId: string, options?: ListRecordsPageOptions): Promise<ListRecordsPageResult>;
   getRecord(baseId: string, tableId: string, recordId: string): Promise<AirtableRecord>;
   createRecord(baseId: string, tableId: string, fields: FieldSet): Promise<AirtableRecord>;
+  createRecordsPage(baseId: string, tableId: string, records: FieldSet[]): Promise<AirtableRecord[]>;
   updateRecords(baseId: string, tableId: string, records: { id: string; fields: FieldSet }[]): Promise<AirtableRecord[]>;
   deleteRecords(baseId: string, tableId: string, recordIds: string[]): Promise<{ id: string }[]>;
   createTable(baseId: string, name: string, fields: Field[], description?: string): Promise<Table>;
