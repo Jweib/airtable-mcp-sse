@@ -495,6 +495,13 @@ export const DescribeTableArgsSchema = z.object({
   detailLevel: TableDetailLevelSchema.optional().default('full'),
 });
 
+export const GetTableSchemaArgsSchema = z.object({
+  baseId: z.string().describe('Airtable base ID (app + 14 alphanumeric characters)'),
+  tableId: z.string().describe('Table ID (tbl + 14 chars) or table name'),
+}).strict();
+
+export type GetTableSchemaArgs = z.infer<typeof GetTableSchemaArgsSchema>;
+
 export const ListTablesArgsSchema = z.object({
   baseId: z.string(),
   detailLevel: TableDetailLevelSchema.optional().default('full'),

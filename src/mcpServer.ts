@@ -15,6 +15,7 @@ import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import {
   ListRecordsArgsSchema,
   ListRecordsForTableArgsSchema,
+  GetTableSchemaArgsSchema,
   ListTablesArgsSchema,
   DescribeTableArgsSchema,
   GetRecordArgsSchema,
@@ -34,6 +35,7 @@ import {
   IAirtableMCPServer,
 } from './types.js';
 import { listRecordsForTable } from './tools/listRecordsForTable.js';
+import { getTableSchema } from './tools/getTableSchema.js';
 
 const getInputSchema = (schema: z.ZodType<object>): ListToolsResult['tools'][0]['inputSchema'] => {
   const jsonSchema = zodToJsonSchema(schema);
@@ -217,6 +219,11 @@ export class AirtableMCPServer implements IAirtableMCPServer {
           inputSchema: getInputSchema(DescribeTableArgsSchema),
         },
         {
+          name: 'get_table_schema',
+          description: 'Get the full schema for a specific table (official MCP-aligned format)',
+          inputSchema: getInputSchema(GetTableSchemaArgsSchema),
+        },
+        {
           name: 'get_record',
           description: 'Get a specific record by ID',
           inputSchema: getInputSchema(GetRecordArgsSchema),
@@ -365,6 +372,12 @@ export class AirtableMCPServer implements IAirtableMCPServer {
                 };
             }
           }));
+        }
+
+        case 'get_table_schema': {
+          const args = GetTableSchemaArgsSchema.parse(request.params.arguments);
+          const result = await getTableSchema(this.airtableService, args);
+          return formatToolResponse(result);
         }
 
         case 'describe_table': {
