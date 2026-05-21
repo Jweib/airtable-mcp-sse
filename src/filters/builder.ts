@@ -1,4 +1,4 @@
-import type { Table } from '../types.js';
+import type { Field, Table } from '../types.js';
 
 const SUPPORTED_DATE_MODES = [
   'today',
@@ -35,6 +35,48 @@ type ComparisonOperator =
   | 'filename'
   | 'fileType';
 
+const TEXT_SEARCH_OPERATORS: ComparisonOperator[] = ['contains', 'doesNotContain'];
+const NUMERIC_COMPARE_OPERATORS: ComparisonOperator[] = ['<', '>', '<=', '>='];
+const HAS_ANY_ALL_OPERATORS: ComparisonOperator[] = ['hasAnyOf', 'hasAllOf'];
+const IS_ANY_NONE_OPERATORS: ComparisonOperator[] = ['isAnyOf', 'isNoneOf'];
+const DATE_OPERATORS: ComparisonOperator[] = ['isWithin'];
+const ATTACHMENT_OPERATORS: ComparisonOperator[] = ['filename', 'fileType'];
+const UNIVERSAL_OPERATORS: ComparisonOperator[] = ['=', '!=', 'isEmpty', 'isNotEmpty'];
+
+const TEXT_FIELD_TYPES = new Set([
+  'singleLineText',
+  'multilineText',
+  'richText',
+  'email',
+  'url',
+  'phoneNumber',
+  'autoNumber',
+  'barcode',
+]);
+
+const NUMERIC_FIELD_TYPES = new Set([
+  'number',
+  'currency',
+  'percent',
+  'rating',
+  'count',
+  'duration',
+  'autoNumber',
+]);
+
+const HAS_ANY_ALL_FIELD_TYPES = new Set([
+  'multipleSelects',
+  'multipleAttachments',
+  'multipleRecordLinks',
+  'multipleCollaborators',
+]);
+
+const IS_ANY_NONE_FIELD_TYPES = new Set(['singleSelect', 'singleCollaborator']);
+
+const DATE_FIELD_TYPES = new Set(['date', 'dateTime', 'createdTime', 'lastModifiedTime']);
+
+const ATTACHMENT_FIELD_TYPES = new Set(['multipleAttachments']);
+
 interface LogicalFilterNode {
   operator: LogicalOperator;
   operands: FilterNode[];
@@ -53,6 +95,8 @@ interface DateModeValue {
   amount?: number;
 }
 
+type SchemaField = Field & { id: string };
+
 const assertIsObject = (value: unknown, errorMessage: string): Record<string, unknown> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(errorMessage);
@@ -60,7 +104,27 @@ const assertIsObject = (value: unknown, errorMessage: string): Record<string, un
   return value as Record<string, unknown>;
 };
 
-const escapeStringValue = (value: string): string => value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+export const escapeStringValue = (value: string): string => value
+  .replace(/\\/g, '\\\\')
+  .replace(/"/g, '\\"')
+  .replace(/\n/g, '\\n')
+  .replace(/\r/g, '\\r')
+  .replace(/\t/g, '\\t');
+
+const escapeFieldNameForFormula = (fieldName: string): string => {
+  let escaped = fieldName;
+  if (fieldName.includes('}')) {
+    // eslint-disable-next-line no-console
+    console.warn(`Field name '${fieldName}' contains '}' which was escaped for formula.`);
+    escaped = escaped.replace(/}/g, '\\}');
+  }
+  if (fieldName.includes('"')) {
+    // eslint-disable-next-line no-console
+    console.warn(`Field name '${fieldName}' contains '"' which was escaped for formula.`);
+    escaped = escaped.replace(/"/g, '\\"');
+  }
+  return escaped;
+};
 
 const asFormulaValue = (value: unknown): string => {
   if (typeof value === 'string') return `"${escapeStringValue(value)}"`;
@@ -69,19 +133,124 @@ const asFormulaValue = (value: unknown): string => {
   throw new Error(`Unsupported filter value type: ${typeof value}`);
 };
 
-const getFieldReference = (fieldIdentifier: unknown, tableSchema: Table): string => {
+const resolveField = (fieldIdentifier: unknown, tableSchema: Table): SchemaField => {
   if (typeof fieldIdentifier !== 'string') {
     throw new Error('Expected first operand to be a field identifier string.');
   }
 
   const field = tableSchema.fields.find(
-    (candidate) => candidate.id === fieldIdentifier || candidate.name === fieldIdentifier,
+    (candidate): candidate is SchemaField => (
+      candidate.id === fieldIdentifier || candidate.name === fieldIdentifier
+    ),
   );
   if (!field) {
     throw new Error(`Unknown field '${fieldIdentifier}' in filters.`);
   }
 
-  return `{${field.name}}`;
+  return field;
+};
+
+/**
+ * Airtable filterByFormula resolves fields by display name inside curly braces (e.g. {Name}),
+ * not by field id ({fldXXX}). The REST API does not accept {fld...} as a field reference in
+ * formulas (see Airtable support docs on filterByFormula). MCP filter operands use field IDs
+ * or names; we resolve to the schema field and emit an escaped *name* reference for the API.
+ */
+const getFieldReference = (field: SchemaField): string => `{${escapeFieldNameForFormula(field.name)}}`;
+
+const getAllowedOperatorsForFieldType = (fieldType: string): string[] => {
+  const allowed = new Set<string>(UNIVERSAL_OPERATORS);
+
+  if (TEXT_FIELD_TYPES.has(fieldType) || fieldType === 'formula') {
+    TEXT_SEARCH_OPERATORS.forEach((operator) => allowed.add(operator));
+  }
+  if (NUMERIC_FIELD_TYPES.has(fieldType) || fieldType === 'formula') {
+    NUMERIC_COMPARE_OPERATORS.forEach((operator) => allowed.add(operator));
+  }
+  if (HAS_ANY_ALL_FIELD_TYPES.has(fieldType)) {
+    HAS_ANY_ALL_OPERATORS.forEach((operator) => allowed.add(operator));
+  }
+  if (IS_ANY_NONE_FIELD_TYPES.has(fieldType)) {
+    IS_ANY_NONE_OPERATORS.forEach((operator) => allowed.add(operator));
+  }
+  if (DATE_FIELD_TYPES.has(fieldType)) {
+    DATE_OPERATORS.forEach((operator) => allowed.add(operator));
+  }
+  if (ATTACHMENT_FIELD_TYPES.has(fieldType)) {
+    ATTACHMENT_OPERATORS.forEach((operator) => allowed.add(operator));
+  }
+
+  return Array.from(allowed).sort();
+};
+
+const validateOperatorForField = (operator: string, field: SchemaField): void => {
+  const fieldType = field.type;
+  const allowedForField = getAllowedOperatorsForFieldType(fieldType);
+  const formatError = (hint?: string) => {
+    const suffix = hint ? ` ${hint}` : '';
+    throw new Error(
+      `Operator '${operator}' is not supported on field type '${fieldType}' (field: ${field.name}). `
+      + `Allowed operators for '${fieldType}' fields: [${allowedForField.join(', ')}].${suffix}`,
+    );
+  };
+
+  if (TEXT_SEARCH_OPERATORS.includes(operator as ComparisonOperator)) {
+    if (fieldType === 'formula') {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `Operator '${operator}' used on formula field '${field.name}': return type is unknown, allowing with warning.`,
+      );
+      return;
+    }
+    if (!TEXT_FIELD_TYPES.has(fieldType)) {
+      formatError();
+    }
+    return;
+  }
+
+  if (NUMERIC_COMPARE_OPERATORS.includes(operator as ComparisonOperator)) {
+    if (fieldType === 'formula') {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `Operator '${operator}' used on formula field '${field.name}': return type is unknown, allowing with warning.`,
+      );
+      return;
+    }
+    if (!NUMERIC_FIELD_TYPES.has(fieldType)) {
+      formatError();
+    }
+    return;
+  }
+
+  if (HAS_ANY_ALL_OPERATORS.includes(operator as ComparisonOperator)) {
+    if (!HAS_ANY_ALL_FIELD_TYPES.has(fieldType)) {
+      const hint = fieldType === 'singleSelect'
+        ? "Use 'isAnyOf' or 'isNoneOf' instead of 'hasAnyOf'/'hasAllOf' for singleSelect fields."
+        : undefined;
+      formatError(hint);
+    }
+    return;
+  }
+
+  if (IS_ANY_NONE_OPERATORS.includes(operator as ComparisonOperator)) {
+    if (!IS_ANY_NONE_FIELD_TYPES.has(fieldType)) {
+      formatError();
+    }
+    return;
+  }
+
+  if (DATE_OPERATORS.includes(operator as ComparisonOperator)) {
+    if (!DATE_FIELD_TYPES.has(fieldType)) {
+      formatError();
+    }
+    return;
+  }
+
+  if (ATTACHMENT_OPERATORS.includes(operator as ComparisonOperator)) {
+    if (!ATTACHMENT_FIELD_TYPES.has(fieldType)) {
+      formatError();
+    }
+  }
 };
 
 const requireArrayValue = (value: unknown, operator: string): unknown[] => {
@@ -164,8 +333,14 @@ const buildDateFormula = (fieldRef: string, rawDateValue: unknown): string => {
   }
 };
 
-const buildComparisonFormula = (operator: ComparisonOperator, operands: unknown[], tableSchema: Table): string => {
-  const fieldRef = getFieldReference(operands[0], tableSchema);
+const buildComparisonFormula = (
+  operator: ComparisonOperator,
+  operands: unknown[],
+  tableSchema: Table,
+): string => {
+  const field = resolveField(operands[0], tableSchema);
+  validateOperatorForField(operator, field);
+  const fieldRef = getFieldReference(field);
 
   switch (operator) {
     case '=':
@@ -227,7 +402,26 @@ const buildNodeFormula = (node: FilterNode, tableSchema: Table): string => {
     throw new Error(`Operator '${comparisonNode.operator}' expects at least one operand.`);
   }
 
-  return buildComparisonFormula(comparisonNode.operator, comparisonNode.operands, tableSchema);
+  return buildUnknownComparisonFormula(String(comparisonNode.operator), comparisonNode.operands, tableSchema);
+};
+
+const buildUnknownComparisonFormula = (
+  operator: string,
+  operands: unknown[],
+  tableSchema: Table,
+): string => {
+  const supportedOperators: ComparisonOperator[] = [
+    '=', '!=', '<', '>', '<=', '>=',
+    'contains', 'doesNotContain', 'isEmpty', 'isNotEmpty',
+    'isAnyOf', 'isNoneOf', 'hasAnyOf', 'hasAllOf',
+    'isWithin', 'filename', 'fileType',
+  ];
+
+  if (!supportedOperators.includes(operator as ComparisonOperator)) {
+    throw new Error(`Unsupported filter operator '${operator}'.`);
+  }
+
+  return buildComparisonFormula(operator as ComparisonOperator, operands, tableSchema);
 };
 
 export const buildFilterFormula = (filters: unknown, tableSchema: Table): string => {
@@ -244,3 +438,9 @@ export const buildFilterFormula = (filters: unknown, tableSchema: Table): string
 
   return buildNodeFormula({ operator, operands } as LogicalFilterNode, tableSchema);
 };
+
+export const buildComparisonFilterFormula = (
+  operator: string,
+  operands: unknown[],
+  tableSchema: Table,
+): string => buildUnknownComparisonFormula(operator, operands, tableSchema);

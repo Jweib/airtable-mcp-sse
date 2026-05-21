@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import type { Table } from '../types.js';
 import { buildFilterFormula } from './builder.js';
 
@@ -35,6 +35,14 @@ const tableSchema = {
     },
   ],
   views: [],
+} as unknown as Table;
+
+const tableSchemaWithBraceField = {
+  ...tableSchema,
+  fields: [
+    ...tableSchema.fields,
+    { id: 'fldBrace', name: 'Score}', type: 'singleLineText' },
+  ],
 } as unknown as Table;
 
 describe('buildFilterFormula', () => {
@@ -189,5 +197,118 @@ describe('buildFilterFormula', () => {
     }, tableSchema)).toThrow(
       "Date mode 'thisCalendarWeek' not yet supported. Supported modes: [today, tomorrow, yesterday, exactDate, daysAgo, daysFromNow, pastWeek, pastMonth, pastYear, pastNumberOfDays, nextNumberOfDays]",
     );
+  });
+
+  test('escapes string value with apostrophe', () => {
+    const formula = buildFilterFormula({
+      operator: 'and',
+      operands: [{ operator: '=', operands: ['fldText', "L'appartement"] }],
+    }, tableSchema);
+
+    expect(formula).toBe('AND({Name}="L\'appartement")');
+  });
+
+  test('escapes string value with double quotes', () => {
+    const formula = buildFilterFormula({
+      operator: 'and',
+      operands: [{ operator: '=', operands: ['fldText', 'Say "hi"'] }],
+    }, tableSchema);
+
+    expect(formula).toBe('AND({Name}="Say \\"hi\\"")');
+  });
+
+  test('escapes string value with backslash', () => {
+    const formula = buildFilterFormula({
+      operator: 'and',
+      operands: [{ operator: '=', operands: ['fldText', 'C:\\path'] }],
+    }, tableSchema);
+
+    expect(formula).toBe('AND({Name}="C:\\\\path")');
+  });
+
+  test('escapes string value with newline', () => {
+    const formula = buildFilterFormula({
+      operator: 'and',
+      operands: [{ operator: '=', operands: ['fldText', 'line1\nline2'] }],
+    }, tableSchema);
+
+    expect(formula).toBe('AND({Name}="line1\\nline2")');
+  });
+
+  test('throws for unknown comparison operator', () => {
+    expect(() => buildFilterFormula({
+      operator: 'and',
+      operands: [{ operator: 'startsWith', operands: ['fldText', 'foo'] }],
+    }, tableSchema)).toThrow("Unsupported filter operator 'startsWith'.");
+  });
+
+  test('throws for unknown root logical operator', () => {
+    expect(() => buildFilterFormula({
+      operator: 'xor',
+      operands: [{ operator: '=', operands: ['fldText', 'foo'] }],
+    }, tableSchema)).toThrow("Root filters operator must be 'and' or 'or'.");
+  });
+
+  test('throws for empty logical operands array', () => {
+    expect(() => buildFilterFormula({
+      operator: 'and',
+      operands: [],
+    }, tableSchema)).toThrow("Root filters must contain a non-empty 'operands' array.");
+  });
+
+  test('throws when using contains on number field', () => {
+    expect(() => buildFilterFormula({
+      operator: 'and',
+      operands: [{ operator: 'contains', operands: ['fldNumber', '10'] }],
+    }, tableSchema)).toThrow(
+      "Operator 'contains' is not supported on field type 'number' (field: Score). Allowed operators for 'number' fields:",
+    );
+  });
+
+  test('throws when using < on singleLineText field', () => {
+    expect(() => buildFilterFormula({
+      operator: 'and',
+      operands: [{ operator: '<', operands: ['fldText', 1] }],
+    }, tableSchema)).toThrow(
+      "Operator '<' is not supported on field type 'singleLineText' (field: Name). Allowed operators for 'singleLineText' fields:",
+    );
+  });
+
+  test('throws when using isWithin on singleLineText field', () => {
+    expect(() => buildFilterFormula({
+      operator: 'and',
+      operands: [{ operator: 'isWithin', operands: ['fldText', { mode: 'today' }] }],
+    }, tableSchema)).toThrow(
+      "Operator 'isWithin' is not supported on field type 'singleLineText' (field: Name). Allowed operators for 'singleLineText' fields:",
+    );
+  });
+
+  test('throws when using hasAnyOf on singleSelect and suggests isAnyOf', () => {
+    expect(() => buildFilterFormula({
+      operator: 'and',
+      operands: [{ operator: 'hasAnyOf', operands: ['fldSelect', ['selA']] }],
+    }, tableSchema)).toThrow(
+      "Operator 'hasAnyOf' is not supported on field type 'singleSelect' (field: Status). Allowed operators for 'singleSelect' fields:",
+    );
+    expect(() => buildFilterFormula({
+      operator: 'and',
+      operands: [{ operator: 'hasAnyOf', operands: ['fldSelect', ['selA']] }],
+    }, tableSchema)).toThrow("Use 'isAnyOf' or 'isNoneOf' instead of 'hasAnyOf'/'hasAllOf' for singleSelect fields.");
+  });
+
+  test('escapes field name containing } in formula reference', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const formula = buildFilterFormula({
+      operator: 'and',
+      operands: [{ operator: '=', operands: ['fldBrace', 'x'] }],
+    }, tableSchemaWithBraceField);
+
+    expect(formula).toBe('AND({Score\\}}="x")');
+    expect(warnSpy).toHaveBeenCalledWith(
+      "Field name 'Score}' contains '}' which was escaped for formula.",
+    );
+
+    warnSpy.mockRestore();
   });
 });
