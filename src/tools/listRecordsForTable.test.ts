@@ -152,6 +152,10 @@ describe('listRecordsForTable', () => {
       records: [apiRecord('recAAAAAAAAAAAAAA', { Name: 'Alice' })],
       offset: 'itrNEXT/page',
     });
+    vi.mocked(mockService.listRecordsPage).mockResolvedValueOnce({
+      records: makeRecords(1),
+      offset: undefined,
+    });
 
     const result = await listRecordsForTable(mockService, {
       baseId,
@@ -160,8 +164,47 @@ describe('listRecordsForTable', () => {
     });
 
     expect(result.nextCursor).toBe('itrNEXT/page');
-    expect(result.metadata).toBeUndefined();
-    expect(mockService.listRecordsPage).toHaveBeenCalledTimes(1);
+    expect(result.metadata).toEqual({ totalRecordCount: 1 });
+    expect(mockService.listRecordsPage).toHaveBeenCalledTimes(2);
+  });
+
+  test('pageSize=1 on 130 records returns totalRecordCount=130 and nextCursor in one MCP call', async () => {
+    let callCount = 0;
+    vi.mocked(mockService.listRecordsPage).mockImplementation(async (_baseId, _tableId, options) => {
+      callCount += 1;
+
+      // First call: the requested page (pageSize=1, no offset)
+      if (callCount === 1) {
+        expect(options.pageSize).toBe(1);
+        expect(options.offset).toBeUndefined();
+        return { records: makeRecords(1, 0), offset: 'itrPage2' };
+      }
+
+      // Count pass: 100 + 30 records, from the start (no offset)
+      if (callCount === 2) {
+        expect(options.pageSize).toBe(100);
+        expect(options.offset).toBeUndefined();
+        return { records: makeRecords(100, 0), offset: 'itrCount2' };
+      }
+      if (callCount === 3) {
+        expect(options.pageSize).toBe(100);
+        expect(options.offset).toBe('itrCount2');
+        return { records: makeRecords(30, 100), offset: undefined };
+      }
+
+      throw new Error('Unexpected extra REST call');
+    });
+
+    const result = await listRecordsForTable(mockService, {
+      baseId,
+      tableId,
+      pageSize: 1,
+    });
+
+    expect(result.records).toHaveLength(1);
+    expect(result.nextCursor).toBe('itrPage2');
+    expect(result.metadata).toEqual({ totalRecordCount: 130 });
+    expect(callCount).toBe(3);
   });
 
   test('no API offset includes totalRecordCount and omits nextCursor', async () => {
@@ -266,6 +309,12 @@ describe('listRecordsForTable', () => {
       if (callCount === 2) {
         return { records: makeRecords(50, 100), offset: 'itrPage3' };
       }
+      if (callCount === 3) {
+        return { records: makeRecords(100), offset: 'itrCount2' };
+      }
+      if (callCount === 4) {
+        return { records: makeRecords(50, 100), offset: undefined };
+      }
       throw new Error('Unexpected extra REST call');
     });
 
@@ -275,10 +324,10 @@ describe('listRecordsForTable', () => {
       pageSize: 150,
     });
 
-    expect(callCount).toBe(2);
+    expect(callCount).toBe(4);
     expect(result.records).toHaveLength(150);
     expect(result.nextCursor).toBe('itrPage3');
-    expect(result.metadata).toBeUndefined();
+    expect(result.metadata).toEqual({ totalRecordCount: 150 });
     expect(mockService.listRecordsPage).toHaveBeenNthCalledWith(
       1,
       baseId,
@@ -331,6 +380,15 @@ describe('listRecordsForTable', () => {
       if (callCount === 3) {
         return { records: makeRecords(50, 200), offset: 'itrPage4' };
       }
+      if (callCount === 4) {
+        return { records: makeRecords(100), offset: 'itrCount2' };
+      }
+      if (callCount === 5) {
+        return { records: makeRecords(100, 100), offset: 'itrCount3' };
+      }
+      if (callCount === 6) {
+        return { records: makeRecords(50, 200), offset: undefined };
+      }
       throw new Error('Unexpected extra REST call');
     });
 
@@ -340,10 +398,11 @@ describe('listRecordsForTable', () => {
       pageSize: 250,
     });
 
-    expect(callCount).toBe(3);
+    expect(callCount).toBe(6);
     expect(result.records).toHaveLength(250);
     expect(result.nextCursor).toBe('itrPage4');
-    expect(mockService.listRecordsPage).toHaveBeenCalledTimes(3);
+    expect(result.metadata).toEqual({ totalRecordCount: 250 });
+    expect(mockService.listRecordsPage).toHaveBeenCalledTimes(6);
   });
 
   test('pageSize=50 uses a single REST call', async () => {

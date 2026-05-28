@@ -116,7 +116,9 @@ Example v2 list response:
 
 - v1 `list_records` followed Airtable REST `offset` internally but did not expose it; it returned all pages merged up to `maxRecords`.
 - v2 `list_records_for_table` and `search_records` expose an opaque **`nextCursor`** in the MCP response. Pass it back as `cursor` for the next page.
-- When the table is exhausted, v2 may include `metadata.totalRecordCount` (count for the current result set only).
+- `list_records_for_table` always includes `metadata.totalRecordCount` (the total number of matching records), even when `nextCursor` is present.
+  - This may require extra internal REST calls to compute the count.
+  - The server enforces a safety cap on count pagination (currently 80 REST calls). If exceeded, it returns an error instead of an incorrect partial count.
 
 There is no `offset` parameter on MCP tools.
 

@@ -58,6 +58,9 @@ export interface ListRecordsForTableService {
 
 export type { ListRecordsPageOptions, ListRecordsPageResult };
 
+const COUNT_REST_PAGE_SIZE = 100;
+const MAX_COUNT_REST_CALLS = 80;
+
 export const validateListRecordsForTableInput = (input: ListRecordsForTableInput): ValidatedListRecordsForTableInput => {
   validateBaseId(input.baseId);
 
@@ -193,6 +196,51 @@ export const buildListRecordsPageOptions = (
   return baseOptions;
 };
 
+const resolvePrimaryFieldName = (table: Table): string | undefined => {
+  const primaryField = table.fields.find((f) => f.id === table.primaryFieldId);
+  return primaryField?.name;
+};
+
+const countTotalRecords = async (
+  service: ListRecordsForTableService,
+  baseId: string,
+  tableId: string,
+  basePageOptions: Omit<ListRecordsPageOptions, 'pageSize' | 'offset'>,
+  countFieldName?: string,
+): Promise<number> => {
+  let total = 0;
+  let currentOffset: string | undefined;
+  let restCalls = 0;
+
+  while (restCalls < MAX_COUNT_REST_CALLS) {
+    const fieldsForCount = countFieldName ? [countFieldName] : basePageOptions.fields;
+    const pageOptions: ListRecordsPageOptions = {
+      ...basePageOptions,
+      pageSize: COUNT_REST_PAGE_SIZE,
+    };
+    if (fieldsForCount) {
+      pageOptions.fields = fieldsForCount;
+    }
+    if (currentOffset) {
+      pageOptions.offset = currentOffset;
+    }
+
+    restCalls += 1;
+    // eslint-disable-next-line no-await-in-loop
+    const { records, offset } = await service.listRecordsPage(baseId, tableId, pageOptions);
+    total += records.length;
+
+    if (!offset) {
+      return total;
+    }
+    currentOffset = offset;
+  }
+
+  throw new Error(
+    `list_records_for_table totalRecordCount exceeded maximum REST calls (${MAX_COUNT_REST_CALLS}).`,
+  );
+};
+
 export const listRecordsForTable = async (
   service: ListRecordsForTableService,
   rawInput: ListRecordsForTableInput,
@@ -224,9 +272,22 @@ export const listRecordsForTable = async (
 
   if (nextCursor) {
     output.nextCursor = nextCursor;
-  } else if (tableExhausted) {
-    output.metadata = { totalRecordCount: mappedRecords.length };
   }
+
+  let totalRecordCount: number;
+  if (tableExhausted && !nextCursor && !initialOffset) {
+    totalRecordCount = mappedRecords.length;
+  } else {
+    const countFieldName = resolvePrimaryFieldName(table);
+    totalRecordCount = await countTotalRecords(
+      service,
+      validated.baseId,
+      table.id,
+      basePageOptions,
+      countFieldName,
+    );
+  }
+  output.metadata = { totalRecordCount };
 
   return output;
 };
